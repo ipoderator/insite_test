@@ -237,6 +237,9 @@ def _run(args: argparse.Namespace, console: Console, session: Any,
     try:
         me = tg.get_me() or {}
         console.ok(f"Токен бота действителен: @{me.get('username', '?')}")
+        # Telegram keeps the last delivery error across setWebhook: only one dated from this
+        # moment on is about the new deploy (dates are whole seconds, hence the floor)
+        webhook_set_at = int(time.time())
         tg.set_webhook(webhook_url, values["TELEGRAM_WEBHOOK_SECRET"], ALLOWED_UPDATES)
         console.ok(f"Webhook установлен: {webhook_url} (с секретом)")
         tg.set_my_commands(_bot_commands())
@@ -247,9 +250,13 @@ def _run(args: argparse.Namespace, console: Console, session: Any,
     if info.get("url") != webhook_url:
         raise ScriptError(f"getWebhookInfo показывает другой адрес: {info.get('url')!r}")
     if info.get("last_error_message"):
-        console.fail(f"getWebhookInfo: последняя ошибка доставки — "
-                     f"{info['last_error_message']}")
-        return 1
+        error_date = info.get("last_error_date")
+        if not isinstance(error_date, int) or error_date >= webhook_set_at:
+            console.fail(f"getWebhookInfo: последняя ошибка доставки — "
+                         f"{info['last_error_message']}")
+            return 1
+        console.info(f"getWebhookInfo помнит ошибку доставки до этого деплоя — "
+                     f"{info['last_error_message']}; после установки webhook новых нет.")
     console.ok(f"getWebhookInfo: адрес верный, ошибок доставки нет "
                f"(в очереди: {info.get('pending_update_count', 0)})")
 

@@ -31,8 +31,8 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from . import scenario as sc
 from . import validators
-from .leads import (answer_key, build_items, deliver_lead, format_summary, lead_files,
-                    node_answer_text, session_path)
+from .leads import (MAX_MESSAGE_LENGTH, answer_key, build_items, deliver_lead, format_summary,
+                    lead_files, node_answer_text, session_path)
 from .scenario import NODES, Node, Option
 from .texts import TextStore
 
@@ -473,7 +473,10 @@ class Engine:
             s["context"]["intro_shown"] = node_id
         if node.kind == "phone":
             return self._render_phone(c, node)
-        message_id = self._send(c, self._screen_text(c, node), _inline(self._keyboard(c, node)))
+        parts = self._card_parts(c) if node_id == "ex_card" else [self._screen_text(c, node)]
+        for part in parts[:-1]:  # a long card: the buttons go under its last message
+            self._send(c, part)
+        message_id = self._send(c, parts[-1], _inline(self._keyboard(c, node)))
         s["message_id"] = message_id
         s["context"]["q_msg"] = message_id
 
@@ -538,6 +541,26 @@ class Engine:
         return "\n".join(lines)
 
     def _card_html(self, c: _Turn) -> str:
+        return "\n".join(self._card_lines(c))
+
+    def _card_parts(self, c: _Turn) -> List[str]:
+        """The card as messages of at most 4096 characters, split between examples only.
+
+        An example line is never cut (that could break its link); a single line longer than
+        the limit is still sent alone — Telegram counts the text without tags and entities,
+        and the panel limits a title and a note to far below 4096 visible characters.
+        """
+        parts: List[str] = []
+        current = ""
+        for line in self._card_lines(c):
+            if current and len(current) + 1 + len(line) > MAX_MESSAGE_LENGTH:
+                parts.append(current)
+                current = line
+            else:
+                current = current + "\n" + line if current else line
+        return parts + [current]
+
+    def _card_lines(self, c: _Turn) -> List[str]:
         category = self._category(c.s["context"].get("example_category"))
         topic = category["topic"] if category else ""
         lines = [self._esc("ex_card.header", topic=topic), ""]
@@ -556,7 +579,7 @@ class Engine:
         if not items:
             lines.append(self._esc("ex_card.empty"))
         lines += ["", self._esc("ex_card.note")]
-        return "\n".join(lines)
+        return lines
 
     def _category(self, category_id: Any) -> Optional[dict]:
         try:

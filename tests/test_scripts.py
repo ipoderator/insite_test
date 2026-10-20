@@ -11,6 +11,7 @@ import io
 import itertools
 import json
 import re
+import time
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlsplit
 
@@ -160,6 +161,9 @@ class FakeBotApi:
         self.tg = tg
         self.calls: List[tuple] = []
         self.webhook: Dict[str, Any] = {"url": "", "pending_update_count": 0}
+        # Telegram keeps the last delivery error across setWebhook; when set, getWebhookInfo
+        # reports one dated this many seconds before the moment of the call
+        self.delivery_error_age: Optional[int] = None
         self._ids = itertools.count(1000)
 
     def methods(self) -> List[str]:
@@ -181,7 +185,11 @@ class FakeBotApi:
                             "allowed_updates": body.get("allowed_updates")}
             return self._ok(True)
         if api_method == "getWebhookInfo":
-            return self._ok(dict(self.webhook))
+            info = dict(self.webhook)
+            if self.delivery_error_age is not None:
+                info.update(last_error_date=int(time.time()) - self.delivery_error_age,
+                            last_error_message="Wrong response from the webhook: 502 Bad Gateway")
+            return self._ok(info)
         if api_method == "setMyCommands":
             return self._ok(True)
         if api_method == "sendMessage":
@@ -412,6 +420,25 @@ def test_deploy_fails_when_health_check_never_passes(tmp_path):
     assert code != 0
     assert "/health" in out
     assert "setWebhook" not in bot.methods(), "no webhook to an app that does not start"
+    assert_no_secrets(out)
+
+
+def test_deploy_ignores_a_webhook_delivery_error_older_than_this_deploy(tmp_path):
+    pa, bot, net = deploy_world()
+    bot.delivery_error_age = 3600  # left from before: the app was down an hour ago
+    code, out = run_deploy(write_env(tmp_path), net)
+    assert code == 0, out
+    assert "ошибок доставки нет" in out
+    assert_no_secrets(out)
+
+
+def test_deploy_fails_on_a_webhook_delivery_error_after_set_webhook(tmp_path):
+    pa, bot, net = deploy_world()
+    bot.delivery_error_age = 0  # Telegram could not deliver to the new webhook just now
+    code, out = run_deploy(write_env(tmp_path), net)
+    assert code == 1, out
+    assert "502 Bad Gateway" in out
+    assert "ошибок доставки нет" not in out
     assert_no_secrets(out)
 
 

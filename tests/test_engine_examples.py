@@ -1,6 +1,7 @@
 """Examples of works (from the database), ordering from them, contacts screen."""
 import pytest
 
+from leadbot.telegram import TelegramError
 from tests.sim import Env, assert_question, label, open_menu, walk
 
 
@@ -51,6 +52,43 @@ def test_card_lists_examples_with_demo_mark_and_links(sim, env):
     assert sim.buttons == [label("ex_card.opt.order"), label("common.back_to_spheres")]
     sim.click(label("common.back_to_spheres"))
     assert_question(sim, "ex_sphere")
+
+
+def test_long_card_is_split_into_messages_with_buttons_under_the_last(sim, env):
+    real_send = env.tg.send_message
+
+    def send_like_telegram(chat_id, text, **kwargs):
+        if len(text) > 4096:  # what the Bot API answers to a longer text
+            raise TelegramError("Bad Request: message is too long", 400)
+        return real_send(chat_id, text, **kwargs)
+
+    env.tg.send_message = send_like_telegram
+    cid = env.storage.save_category({"slug": "big", "button": "Много примеров",
+                                     "topic": "большой тематике", "sort": 0})
+    titles = [f"Пример {n:02d} " + "а" * 180 for n in range(1, 31)]  # panel limit: 200
+    for n, title in enumerate(titles):
+        env.storage.save_item({"category_id": cid, "title": title, "sort": n,
+                               "url": f"https://example.ru/work/{n}?a=1&b=2",
+                               "note": "описание & детали " * 27, "is_demo": False})
+    sim.click(label("common.back"))
+    sim.click(label("menu.opt.examples"))
+    mark = sim.mark()
+    sim.click("Много примеров")
+
+    sent = [kw for name, kw in env.tg.calls[mark:] if name == "send_message"]
+    texts = sim.texts_since(mark)
+    assert label("common.error") not in texts
+    assert len(sent) > 1, "a 20 000-character card does not fit one message"
+    assert all(len(kw["text"]) <= 4096 for kw in sent)
+    joined = "\n".join(texts)
+    assert texts[0].startswith(label("ex_card.header", topic="большой тематике"))
+    assert [t for t in titles if t in joined] == titles, "every example, in order, once"
+    assert all(joined.count(t) == 1 for t in titles)
+    assert texts[-1].endswith(label("ex_card.note"))
+    assert all(not kw["reply_markup"] for kw in sent[:-1])
+    assert sim.buttons == [label("ex_card.opt.order"), label("common.back_to_spheres")]
+    sim.click(label("ex_card.opt.order"))
+    assert label("order.question") in sim.current_text
 
 
 def test_empty_category_says_so(sim, env):
