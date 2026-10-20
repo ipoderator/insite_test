@@ -1,7 +1,8 @@
 """Flask application: Telegram webhook, health check (admin panel is added later).
 
-The webhook hands every update to ``LeadbotState.update_handler`` — pass it to
-``create_app`` or assign it later (``get_state(app).update_handler = engine.handle_update``).
+The webhook hands every update to ``LeadbotState.update_handler``. By default it is
+``Engine(storage, tg).handle_update``; tests pass their own handler to ``create_app`` or
+assign it later (``get_state(app).update_handler = ...``).
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from typing import Any, Callable, Optional
 from flask import Flask, abort, jsonify, request
 
 from .config import Config
+from .engine import Engine
 from .storage import Storage
 from .telegram import TelegramClient
 
@@ -32,7 +34,7 @@ class LeadbotState:
 
 
 def log_only_handler(update: dict) -> None:
-    """Placeholder until the dialogue engine is connected."""
+    """Handler that only logs the update (kept for tools that must not answer users)."""
     log.info("Update %s received; dialogue engine is not connected", update.get("update_id"))
 
 
@@ -51,8 +53,9 @@ def create_app(config: Config, storage: Optional[Storage] = None, tg: Any = None
     if tg is None:
         tg = TelegramClient(config.bot_token)
 
-    state = LeadbotState(config=config, storage=storage, tg=tg,
-                         update_handler=update_handler or log_only_handler)
+    if update_handler is None:
+        update_handler = Engine(storage, tg, public_base_url=config.public_base_url).handle_update
+    state = LeadbotState(config=config, storage=storage, tg=tg, update_handler=update_handler)
     app.extensions[EXTENSION_KEY] = state
 
     @app.get("/health")
