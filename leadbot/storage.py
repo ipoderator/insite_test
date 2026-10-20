@@ -242,12 +242,15 @@ class Storage:
         return json.loads(row["data"]) if row else None
 
     def save_session(self, chat_id: int, data: dict) -> None:
-        payload = json.dumps(data, ensure_ascii=False)
         with self._tx() as conn:
-            conn.execute(
-                "INSERT INTO sessions(chat_id, data, updated_at) VALUES (?, ?, ?) "
-                "ON CONFLICT(chat_id) DO UPDATE SET data = excluded.data, "
-                "updated_at = excluded.updated_at", (chat_id, payload, self._now()))
+            self._upsert_session(conn, chat_id, data)
+
+    def _upsert_session(self, conn: sqlite3.Connection, chat_id: int, data: dict) -> None:
+        conn.execute(
+            "INSERT INTO sessions(chat_id, data, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(chat_id) DO UPDATE SET data = excluded.data, "
+            "updated_at = excluded.updated_at",
+            (chat_id, json.dumps(data, ensure_ascii=False), self._now()))
 
     def delete_session(self, chat_id: int) -> None:
         with self._tx() as conn:
@@ -270,16 +273,44 @@ class Storage:
     def create_lead(self, kind: str, chat_id: int, username: Optional[str],
                     name: Optional[str], phone: Optional[str], items: List[dict],
                     files: List[dict], meta: dict) -> int:
-        now = self._now()
         with self._tx() as conn:
-            cur = conn.execute(
-                "INSERT INTO leads(kind, chat_id, username, name, phone, items, files, meta, "
-                "status, delivered, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
-                (kind, chat_id, username, name, phone,
-                 json.dumps(items, ensure_ascii=False), json.dumps(files, ensure_ascii=False),
-                 json.dumps(meta, ensure_ascii=False), LEAD_STATUS_NEW, now, now))
-            return cur.lastrowid
+            return self._insert_lead(conn, kind, chat_id, username, name, phone, items, files,
+                                     meta)
+
+    def create_lead_for_session(self, chat_id: int, expected: Dict[str, Any], session: dict,
+                                kind: str, username: Optional[str], name: Optional[str],
+                                phone: Optional[str], items: List[dict], files: List[dict],
+                                meta: dict) -> Optional[int]:
+        """Save the lead and replace the chat's session with ``session`` in one transaction.
+
+        Only while the stored session still holds the ``expected`` values: when a parallel
+        request has changed it first (a double tap on «Отправить»), nothing is written and
+        the result is ``None``.
+        """
+        with self._tx() as conn:
+            conn.execute("BEGIN IMMEDIATE")  # no other writer between the check and the insert
+            row = conn.execute("SELECT data FROM sessions WHERE chat_id = ?",
+                               (chat_id,)).fetchone()
+            stored = json.loads(row["data"]) if row else {}
+            if any(stored.get(key) != value for key, value in expected.items()):
+                return None
+            lead_id = self._insert_lead(conn, kind, chat_id, username, name, phone, items,
+                                        files, meta)
+            self._upsert_session(conn, chat_id, session)
+            return lead_id
+
+    def _insert_lead(self, conn: sqlite3.Connection, kind: str, chat_id: int,
+                     username: Optional[str], name: Optional[str], phone: Optional[str],
+                     items: List[dict], files: List[dict], meta: dict) -> int:
+        now = self._now()
+        cur = conn.execute(
+            "INSERT INTO leads(kind, chat_id, username, name, phone, items, files, meta, "
+            "status, delivered, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+            (kind, chat_id, username, name, phone,
+             json.dumps(items, ensure_ascii=False), json.dumps(files, ensure_ascii=False),
+             json.dumps(meta, ensure_ascii=False), LEAD_STATUS_NEW, now, now))
+        return cur.lastrowid
 
     @staticmethod
     def _lead_from_row(row: sqlite3.Row) -> dict:

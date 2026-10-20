@@ -326,3 +326,18 @@ def test_login_failures_window(st, clock):
     st.clear_login_failures("1.2.3.4")
     assert st.recent_login_failures("1.2.3.4", minutes=60) == 0
     assert st.recent_login_failures("5.6.7.8", minutes=60) == 1
+
+
+def test_lead_for_session_is_saved_with_the_session_only_once(path):
+    s = Storage(path)
+    s.save_session(5, {"node": "summary", "message_id": 40, "answers": {"x": 1}})
+    closed = {"node": "thanks", "message_id": None, "answers": {}, "submitted": True}
+    args = ("new", "user", "Анна", "+79991234567", [{"title": "Q", "answer": "A"}], [], {})
+    expected = {"node": "summary", "message_id": 40}
+    lead_id = s.create_lead_for_session(5, expected, closed, *args)
+    assert s.get_lead(lead_id)["chat_id"] == 5
+    assert s.load_session(5) == closed
+    assert s.create_lead_for_session(5, expected, {"node": "other"}, *args) is None
+    assert len(s.list_leads()) == 1 and s.load_session(5) == closed
+    assert s.create_lead_for_session(6, expected, closed, *args) is None  # no session at all
+    assert len(s.list_leads()) == 1 and s.load_session(6) is None

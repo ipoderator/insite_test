@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from ..leads import MOSCOW
+from ..scenario import BRANCHES, NODES
 from ..texts import TEXTS, TextDef
 from ..validators import validate_url
 
@@ -29,6 +30,8 @@ POPUP_KEYS = frozenset({"common.already_sent", "common.button_inactive", "err.em
                         "err.no_files"})
 # placeholders the bot copes without: the policy link is appended, the name is optional
 OPTIONAL_PLACEHOLDERS = {"privacy.text": {"policy"}, "thanks.text": {"name"}}
+# question titles: bold in the summary and also the buttons of the «Исправить» list
+EDIT_BUTTON_KEYS = frozenset(NODES[n].title_key for n in {"ns_what"}.union(*BRANCHES.values()))
 _PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
 
 PLACEHOLDER_HINTS = {
@@ -47,11 +50,16 @@ LEAD_STATUSES = (("new", "Новая"), ("processed", "Обработана"))
 LEAD_KINDS = ("new", "redesign", "promo", "examples")
 
 
+def is_button(text_def: TextDef) -> bool:
+    """Shown on a button: one line, a button length limit, «кнопка» in the panel."""
+    return text_def.kind == "button" or text_def.key in EDIT_BUTTON_KEYS
+
+
 def text_limit(text_def: TextDef) -> int:
     """Longest allowed value; two PDF buttons are longer than 60 and stay allowed."""
     if text_def.key in POPUP_KEYS:
         return POPUP_LIMIT
-    if text_def.kind == "button":
+    if is_button(text_def):
         return max(BUTTON_LIMIT, len(text_def.default))
     return MESSAGE_LIMIT
 
@@ -82,7 +90,7 @@ def check_text(key: str, value: Optional[str]) -> Tuple[Optional[str], Optional[
     limit = text_limit(text_def)
     if len(text) > limit:
         return None, f"Слишком длинно: {len(text)} символов, можно не больше {limit}."
-    if text_def.kind == "button" and "\n" in text:
+    if is_button(text_def) and "\n" in text:
         return None, "Подпись кнопки должна быть в одну строку."
     missing = [p for p in required_placeholders(text_def) if "{" + p + "}" not in text]
     if missing:

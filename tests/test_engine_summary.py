@@ -1,4 +1,6 @@
 """Summary before sending (R79): contents, «Исправить», path rebuild, single submit."""
+import copy
+
 import pytest
 
 from leadbot import scenario
@@ -225,3 +227,128 @@ def test_failed_thanks_message_does_not_allow_a_second_lead(sim, env):
     sim.press("summary|submit|", message_id=summary_id)
     assert len(env.leads) == 1
     assert sim.last_popup == label("common.already_sent")
+
+
+def test_new_branch_left_half_way_is_finished_before_the_summary(sim, env):
+    enter_branch(sim, "goods")
+    walk(sim, "goods")
+    edit(sim, "ns_what")
+    sim.click(label("ns_what.opt.services"))
+    assert_question(sim, "sphere", "services")
+    sim.click(label("common.back"))                      # back to ns_what
+    sim.click(label("common.back"))                      # back to the edit list
+    sim.click(label("summary.back"))                     # «К сводке» with services unanswered
+    assert label("summary.unanswered") in sim.texts[-2]
+    assert_question(sim, "sphere", "services")
+    assert label("summary.opt.submit") not in sim.buttons
+    for node_id in scenario.BRANCHES["services"]:
+        assert_question(sim, node_id, "services")
+        answer_default(sim, node_id, "services")
+    assert sim.current_text.startswith(label("summary.header"))
+    sim.click(label("summary.opt.submit"))
+    [lead] = env.leads
+    path = ("ns_what",) + scenario.BRANCHES["services"] + scenario.BRANCHES["final"]
+    assert [i["title"] for i in lead["items"]] == [label(scenario.NODES[n].title_key)
+                                                  for n in path]
+
+
+def test_edit_left_without_the_required_file_is_asked_again(sim, env):
+    enter_branch(sim, "goods")
+    walk(sim, "goods")
+    edit(sim, "example")
+    sim.click(label("example.opt.tz"))
+    assert label("example.tz.prompt") in sim.current_text
+    sim.click(label("common.back"))                      # no file sent: back to the question
+    sim.click(label("common.back"))                      # back to the edit list
+    sim.click(label("summary.back"))
+    assert label("summary.unanswered") in sim.texts[-2]
+    assert_question(sim, "example", "goods")
+    sim.click(label("example.opt.tz"))
+    sim.send_document("tz.pdf")
+    sim.click(label("common.done"))
+    text = sim.current_text
+    assert text.startswith(label("summary.header"))
+    assert f"{label('example.opt.tz')}: tz.pdf" in text
+    assert label("summary.files_value", count=1) in text
+    sim.click(label("summary.opt.submit"))
+    [lead] = env.leads
+    assert [f["file_name"] for f in lead["files"]] == ["tz.pdf"]
+
+
+def _promo_with_site(sim, url):
+    enter_branch(sim, "promo")
+    sim.click(label("pr_what.opt.site"))
+    sim.click(label("common.done"))
+    sim.send(url)
+    walk(sim, "promo", start="pr_types", stop="pr_link")
+    sim.click(label("pr_link.opt.use", url=url))
+    walk(sim, "promo", start="fin_name")
+
+
+def test_edited_site_link_replaces_the_link_for_analysis(sim, env):
+    _promo_with_site(sim, "https://old.example.ru")
+    edit(sim, "pr_what")
+    sim.click(label("common.done"))
+    sim.send("https://new.example.ru")
+    # the answer «Использовать: old link» is outdated: the question comes again
+    assert_question(sim, "pr_link", "promo")
+    assert label("pr_link.opt.use", url="https://new.example.ru") in sim.buttons
+    sim.click(label("pr_link.opt.use", url="https://new.example.ru"))
+    text = sim.current_text
+    assert text.startswith(label("summary.header")) and "old.example.ru" not in text
+    sim.click(label("summary.opt.submit"))
+    [lead] = env.leads
+    assert {"title": label("pr_link.title"), "answer": "https://new.example.ru"} in lead["items"]
+    assert not any("old.example.ru" in i["answer"] for i in lead["items"])
+
+
+def test_removed_site_link_is_not_kept_for_analysis(sim, env):
+    _promo_with_site(sim, "https://old.example.ru")
+    edit(sim, "pr_what")
+    sim.click(label("pr_what.opt.site"))                 # unmark «Сайт»
+    sim.click(label("pr_what.opt.unknown"))
+    sim.click(label("common.done"))
+    assert_question(sim, "pr_link", "promo")
+    assert not any("old.example.ru" in b for b in sim.buttons)
+    sim.click(label("pr_link.opt.none"))
+    sim.click(label("summary.opt.submit"))
+    [lead] = env.leads
+    assert not any("old.example.ru" in i["answer"] for i in lead["items"])
+
+
+def test_parallel_taps_on_submit_create_one_lead(sim, env):
+    """The second webhook request read the summary session before the first one saved it."""
+    enter_branch(sim, "redesign")
+    walk(sim, "redesign")
+    summary_id = sim.current_message_id
+    before = copy.deepcopy(env.storage.load_session(sim.chat_id))
+    sim.press("summary|submit|", message_id=summary_id)
+    assert len(env.leads) == 1
+    after = env.storage.load_session(sim.chat_id)
+    load = env.storage.load_session
+    env.storage.load_session = lambda chat_id: copy.deepcopy(before)
+    try:
+        sim.press("summary|submit|", message_id=summary_id)
+    finally:
+        env.storage.load_session = load
+    assert len(env.leads) == 1
+    assert sim.last_popup == label("common.already_sent")
+    assert env.storage.load_session(sim.chat_id) == after   # the winner's session is kept
+
+
+def test_summary_buttons_and_titles_follow_the_panel(sim, env):
+    env.storage.set_text_override("summary.opt.submit", "Отправить <сейчас> & всё")
+    env.storage.set_text_override("summary.opt.edit", "Поменять ответ")
+    env.storage.set_text_override("summary.back", "Обратно")
+    env.storage.set_text_override("summary.edit_question", "Что поменять?")
+    env.storage.set_text_override("rd_platform.title", "CMS & движок")
+    enter_branch(sim, "redesign")
+    walk(sim, "redesign")
+    assert sim.buttons == ["Отправить <сейчас> & всё", "Поменять ответ"]
+    assert "CMS & движок: " in sim.current_text          # escaped in HTML, shown as typed
+    sim.click("Поменять ответ")
+    assert "Что поменять?" in sim.current_text
+    assert sim.buttons[0] == "CMS & движок" and sim.buttons[-1] == "Обратно"
+    sim.click("Обратно")
+    sim.click("Отправить <сейчас> & всё")
+    assert len(env.leads) == 1

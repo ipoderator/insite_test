@@ -182,3 +182,15 @@ def test_redirect_after_save_ignores_foreign_group(panel):
     resp = panel.post("/admin/texts/menu.text", {"value": "Привет", "group": "//evil.example"})
     assert path_of(resp.location).startswith("/admin/texts?group=")
     assert "evil" not in resp.location
+
+
+def test_question_titles_are_edited_as_edit_list_buttons(panel):
+    block = panel.page("/admin/texts?group=new").split('id="t-pay.title"')[1].split("</form>")[0]
+    assert ">кнопка<" in block and '<input type="text"' in block and "<textarea" not in block
+    assert panel.post("/admin/texts/pay.title", {"value": "Оплата\nонлайн"}).status_code == 400
+    assert panel.post("/admin/texts/pay.title", {"value": "о" * 61}).status_code == 400
+    assert panel.storage.get_text_override("pay.title") is None
+    assert panel.post("/admin/texts/pay.title", {"value": "Онлайн-оплата"}).status_code == 302
+    # a title the summary does not show stays a plain text
+    block = panel.page("/admin/texts?group=examples").split('id="t-ex_sphere.title"')[1]
+    assert ">кнопка<" not in block.split("</form>")[0]

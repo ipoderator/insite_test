@@ -284,7 +284,7 @@ def _text_rows(keys: List[str], texts: TextStore, overrides: Dict[str, str],
         rows.append({
             "key": key,
             "label": text_def.label,
-            "kind": text_def.kind,
+            "kind": "button" if content.is_button(text_def) else text_def.kind,
             "group": GROUP_NAMES.get(text_def.group, text_def.group),
             "default": text_def.default,
             "value": submitted.get(key, overrides.get(key, text_def.default)),

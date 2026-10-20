@@ -366,3 +366,12 @@ def test_texts_from_pdf_keep_their_emoji_slot():
     for key in ["menu.opt.new", "menu.opt.redesign", "menu.opt.promo", "menu.opt.examples",
                 "menu.opt.contacts", "privacy.start"]:
         assert TEXTS[key].default != _plain(TEXTS[key].default), key
+
+
+def test_no_option_caption_starts_with_the_selection_mark():
+    """The bot puts the mark before a chosen option: an own "✅" would look chosen."""
+    from leadbot.scenario import NODES
+    mark = TEXTS["common.mark"].default
+    marked = [o.text_key for node in NODES.values() for o in node.options
+              if TEXTS[o.text_key].default.startswith(mark)]
+    assert marked == ["summary.opt.submit"]   # the summary keyboard marks nothing

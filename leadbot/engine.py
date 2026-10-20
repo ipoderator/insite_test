@@ -102,6 +102,7 @@ class _Turn:
         self.user = dict(user or {})
         self.s = session
         self.popup: Optional[str] = None
+        self.save = True  # False: a parallel request owns the stored session now
 
 
 class Engine:
@@ -347,7 +348,8 @@ class Engine:
                 return
             c = self._load(chat_id, query.get("from") or {})
             self._route_callback(c, str(query.get("data") or ""), message.get("message_id"))
-            self._save(c)
+            if c.save:
+                self._save(c)
         finally:
             try:
                 self.tg.answer_callback(query.get("id"), text=c.popup if c else None)
@@ -633,6 +635,8 @@ class Engine:
                     if not url:
                         continue
                     caption = self._t(opt.text_key, url=url)
+                    if not self._is_answered(c, nid):  # chosen for a link edited since
+                        selected = []
                 else:
                     caption = self._t(opt.text_key)
                 rows.append([(self._mark(caption) if opt.id in selected else caption,
@@ -819,12 +823,25 @@ class Engine:
     # -- moving on ----------------------------------------------------------------------
 
     def _is_answered(self, c: _Turn, node_id: str) -> bool:
+        """The answer is complete: an edit left half-way or an outdated link is not."""
+        node = NODES[node_id]
         answer = self._answer(c, node_id)
-        if NODES[node_id].kind == "hub":
+        if node.kind == "hub":
             return bool(isinstance(answer, dict) and answer.get("done"))
+        selected = sc.selected_option_ids(answer)
+        if node_id == "pr_link" and selected == ["use"]:  # the site link may have been edited
+            return answer.get("text") == self._known_site_url(c)
         if isinstance(answer, dict) and answer.get("text"):
             return True
-        return bool(sc.selected_option_ids(answer))
+        fields = (answer.get("fields") or {}) if isinstance(answer, dict) else {}
+        for option_id in selected:
+            try:
+                opt = node.option(option_id)
+            except KeyError:
+                continue
+            if any(not spec.optional and not fields.get(spec.prompt_key) for spec in opt.inputs):
+                return False
+        return bool(selected)
 
     def _complete(self, c: _Turn, node: Node) -> None:
         """The node and its fields are answered: go to the next screen."""
@@ -854,6 +871,11 @@ class Engine:
 
     def _show_summary(self, c: _Turn) -> None:
         s = c.s
+        missing = next((n for n in session_path(s) if not self._is_answered(c, n)), None)
+        if missing:  # e.g. a new branch chosen in «Исправить» and left: ask before sending
+            self._send(c, self._esc("summary.unanswered"))
+            s.update(edit_mode=True, stack=["summary"])
+            return self._render(c, missing)
         self._drop_keyboard(c)
         s.update(node="summary", edit_mode=False, pending_inputs=[])
         parts = format_summary(build_items(s, self.texts), self.texts, kind=self._lead_kind(c),
@@ -895,16 +917,23 @@ class Engine:
         answers = s["answers"]
         name = (answers.get(answer_key(None, "fin_name")) or {}).get("text")
         phone = (answers.get(answer_key(None, "fin_phone")) or {}).get("text")
-        lead_id = self.storage.create_lead(
-            self._lead_kind(c), c.chat_id, self._username(c), name, phone,
-            build_items(s, self.texts), lead_files(s), self._meta(c))
-        log.info("Lead %s saved", lead_id)
         old_message = s["message_id"]
-        # persist "submitted" right away: a later Telegram failure must not allow a second lead
-        s.update(answers={}, flow=None, branch=None, stack=[], pending_inputs=[],
-                 edit_mode=False, submitted=True, node="thanks", message_id=None,
-                 context={"thanks_name": name or "", "last_lead_id": lead_id})
-        self._save(c)
+        closed = dict(s, answers={}, flow=None, branch=None, stack=[], pending_inputs=[],
+                      edit_mode=False, submitted=True, node="thanks", message_id=None,
+                      context={"thanks_name": name or ""})
+        # "submitted" is saved with the lead: neither a parallel tap on the same summary nor
+        # a later Telegram failure may create a second lead
+        lead_id = self.storage.create_lead_for_session(
+            c.chat_id, {"node": "summary", "message_id": old_message}, closed,
+            self._lead_kind(c), self._username(c), name, phone,
+            build_items(s, self.texts), lead_files(s), self._meta(c))
+        if lead_id is None:
+            c.popup = self._t("common.already_sent")
+            c.save = False
+            return
+        log.info("Lead %s saved", lead_id)
+        s.update(closed)
+        s["context"]["last_lead_id"] = lead_id
         s["message_id"] = old_message
         self._drop_keyboard(c)
         self._deliver(lead_id)
