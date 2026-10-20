@@ -9,7 +9,7 @@
 | Бот | [@InSiteBoGleb_bot](https://t.me/InSiteBoGleb_bot) |
 | Панель администрирования | <https://ipoderator.pythonanywhere.com/admin> (пароль передаётся отдельно, не в этом документе) |
 | Краткая инструкция для проверки | [docs/CHECKLIST.md](CHECKLIST.md) |
-| Исходный код и запуск | этот репозиторий; запуск и тесты — [README.md](../README.md); на GitHub не публиковался — отдаётся репозиторием или архивом, публикация по запросу |
+| Исходный код и запуск | этот репозиторий; запуск и тесты — [README.md](../README.md); код на GitHub: <https://github.com/ipoderator/insite_test> (приватный репозиторий, ветка `master`) |
 | Как менять содержимое бота | [docs/ADMIN_GUIDE.md](ADMIN_GUIDE.md) |
 | Деплой | [docs/DEPLOY.md](DEPLOY.md) |
 | Работа на хостинге проверена | 20.10.2026 ≈17:17 МСК: `scripts/e2e_hosted.py` — 26 из 26 шагов ✅; после перезапуска сервиса заявка на месте и доставлена владельцу |
