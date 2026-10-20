@@ -1,0 +1,80 @@
+"""Flask application: Telegram webhook, health check (admin panel is added later).
+
+The webhook hands every update to ``LeadbotState.update_handler`` — pass it to
+``create_app`` or assign it later (``get_state(app).update_handler = engine.handle_update``).
+"""
+from __future__ import annotations
+
+import hmac
+import logging
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
+
+from flask import Flask, abort, jsonify, request
+
+from .config import Config
+from .storage import Storage
+from .telegram import TelegramClient
+
+log = logging.getLogger(__name__)
+
+UpdateHandler = Callable[[dict], None]
+SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"
+EXTENSION_KEY = "leadbot"
+
+
+@dataclass
+class LeadbotState:
+    config: Config
+    storage: Storage
+    tg: Any
+    update_handler: UpdateHandler
+
+
+def log_only_handler(update: dict) -> None:
+    """Placeholder until the dialogue engine is connected."""
+    log.info("Update %s received; dialogue engine is not connected", update.get("update_id"))
+
+
+def get_state(app: Flask) -> LeadbotState:
+    return app.extensions[EXTENSION_KEY]
+
+
+def create_app(config: Config, storage: Optional[Storage] = None, tg: Any = None,
+               update_handler: Optional[UpdateHandler] = None) -> Flask:
+    app = Flask(__name__)
+    app.secret_key = config.secret_key
+
+    if storage is None:
+        storage = Storage(config.database_path)
+    storage.seed_defaults()
+    if tg is None:
+        tg = TelegramClient(config.bot_token)
+
+    state = LeadbotState(config=config, storage=storage, tg=tg,
+                         update_handler=update_handler or log_only_handler)
+    app.extensions[EXTENSION_KEY] = state
+
+    @app.get("/health")
+    def health():
+        return jsonify(ok=True)
+
+    @app.post("/tg/webhook")
+    def telegram_webhook():
+        given = request.headers.get(SECRET_HEADER, "")
+        if not hmac.compare_digest(given.encode(), config.webhook_secret.encode()):
+            log.warning("Webhook call with a missing or wrong secret from %s",
+                        request.remote_addr)
+            abort(403)
+        update = request.get_json(silent=True)
+        if not isinstance(update, dict):
+            log.warning("Webhook body is not a JSON object; ignored")
+            return jsonify(ok=True)
+        try:
+            state.update_handler(update)
+        except Exception:
+            # Telegram retries non-2xx responses; a broken update must not loop forever.
+            log.exception("Failed to handle update %s", update.get("update_id"))
+        return jsonify(ok=True)
+
+    return app
