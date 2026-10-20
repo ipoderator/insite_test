@@ -1,0 +1,81 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ 'Информационные блоки' if section == 'info' else 'Тексты' }}{% endblock %}
+{% block content %}
+{% if section == 'info' %}
+  <h1>Информационные блоки</h1>
+  <p class="lead-text">Крупные тексты, которые бот показывает клиенту: блок о конфиденциальности,
+    приветствие, вступления и финальное сообщение.</p>
+{% else %}
+  <h1>Тексты бота</h1>
+  <p class="lead-text">Все сообщения, вопросы, подсказки и кнопки. Выберите экран или найдите текст
+    поиском, измените его и нажмите «Сохранить».</p>
+
+  <form class="search card" method="get" action="{{ url_for('admin.texts_page') }}" role="search">
+    <label class="field field-grow">
+      <span class="field-label">Поиск по текстам</span>
+      <input type="search" name="q" value="{{ query }}" placeholder="Например: бюджет, телефон, Готово">
+    </label>
+    <button type="submit" class="btn">Найти</button>
+    {% if query %}<a class="btn btn-quiet" href="{{ url_for('admin.texts_page', group=group) }}">Сбросить</a>{% endif %}
+  </form>
+
+  <nav class="tabs" aria-label="Экраны бота">
+    {% for g in groups %}
+      <a href="{{ url_for('admin.texts_page', group=g.id) }}"{% if not query and g.id == group %} class="active" aria-current="page"{% endif %}>
+        {{ g.name }} <span class="count">{{ g.count }}</span>{% if g.changed %} <span class="count count-changed" title="изменено">✎ {{ g.changed }}</span>{% endif %}
+      </a>
+    {% endfor %}
+  </nav>
+
+  {% if query %}
+    <h2>Найдено: {{ rows|length }}</h2>
+  {% else %}
+    <h2>{{ group_name }}</h2>
+  {% endif %}
+{% endif %}
+
+{% if not rows %}
+  <div class="empty card"><p>Ничего не нашлось. Попробуйте другое слово.</p></div>
+{% endif %}
+
+{% for row in rows %}
+  <form class="text-item card{% if row.changed %} is-changed{% endif %}{% if row.error %} has-error{% endif %}"
+        id="t-{{ row.key }}" method="post" action="{{ url_for('admin.text_save', key=row.key) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="section" value="{{ section }}">
+    <input type="hidden" name="group" value="{{ group }}">
+    {% if query %}<input type="hidden" name="q" value="{{ query }}">{% endif %}
+    <div class="text-head">
+      <label for="v-{{ row.key }}" class="text-label">{{ row.label }}</label>
+      <span class="badges">
+        {% if row.kind == 'button' %}<span class="badge">кнопка</span>{% endif %}
+        {% if query %}<span class="badge">{{ row.group }}</span>{% endif %}
+        {% if row.changed %}<span class="badge badge-changed">изменён</span>{% endif %}
+      </span>
+    </div>
+    {% if row.error %}<p class="field-error" role="alert">{{ row.error }}</p>{% endif %}
+    {% if row.kind == 'button' %}
+      <input type="text" id="v-{{ row.key }}" name="value" value="{{ row.value }}" maxlength="{{ row.limit }}" required>
+    {% else %}
+      <textarea id="v-{{ row.key }}" name="value" rows="{{ [[(row.value|length // 70) + row.value.count('\n') + 1, 2]|max, 12]|min }}" maxlength="{{ row.limit }}" required>{{ row.value }}</textarea>
+    {% endif %}
+    <div class="text-meta">
+      <span class="muted small">до {{ row.limit }} символов</span>
+      {% for name, hint in row.placeholders %}
+        <span class="muted small">· <code>{{ '{' ~ name ~ '}' }}</code> — {{ hint }}</span>
+      {% endfor %}
+      <span class="key small">{{ row.key }}</span>
+    </div>
+    <details class="default">
+      <summary>Текст по умолчанию{% if not row.changed %} — сейчас используется он{% endif %}</summary>
+      <p class="pre">{{ row.default }}</p>
+    </details>
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">Сохранить</button>
+      {% if row.changed %}
+        <button type="submit" class="btn btn-quiet" formaction="{{ url_for('admin.text_reset', key=row.key) }}" formnovalidate>Вернуть по умолчанию</button>
+      {% endif %}
+    </div>
+  </form>
+{% endfor %}
+{% endblock %}

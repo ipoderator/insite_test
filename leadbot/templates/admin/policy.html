@@ -1,0 +1,26 @@
+{% extends "admin/base.html" %}
+{% block title %}Политика (демо){% endblock %}
+{% block content %}
+<h1>Политика конфиденциальности (демо)</h1>
+<p class="lead-text">Это текст страницы <a href="{{ url_for('privacy_page') }}" target="_blank" rel="noopener noreferrer">/privacy</a>,
+  на которую ведёт ссылка в блоке «Перед началом», пока в «Контактах и ссылках» не указана ссылка на вашу политику.
+  На странице всегда стоит пометка «Демонстрационный текст».</p>
+{% if external %}
+  <div class="notice">Сейчас бот ведёт на вашу ссылку: {{ external }}. Этот текст клиенты не увидят.</div>
+{% endif %}
+<form method="post" action="{{ url_for('admin.policy') }}" class="card stack{% if error %} has-error{% endif %}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label class="field">
+    <span class="field-label">Текст страницы</span>
+    {% if error %}<span class="field-error" role="alert">{{ error }}</span>{% endif %}
+    <textarea name="text" rows="20" required>{{ text }}</textarea>
+    <span class="field-hint">Обычный текст. Пустая строка начинает новый абзац. Заполните места в квадратных скобках.</span>
+  </label>
+  <div class="actions">
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+    {% if changed %}
+      <button type="submit" class="btn btn-quiet" formaction="{{ url_for('admin.policy_reset') }}" formnovalidate>Вернуть демонстрационный текст</button>
+    {% endif %}
+  </div>
+</form>
+{% endblock %}

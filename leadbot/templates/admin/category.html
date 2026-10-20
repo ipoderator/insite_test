@@ -1,0 +1,88 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ category.button }}{% endblock %}
+{% macro item_fields(values, errors, prefix) %}
+  <label class="field{% if errors.title %} has-error{% endif %}">
+    <span class="field-label">Название</span>
+    <input type="text" name="title" value="{{ values.title or '' }}" maxlength="200" placeholder="Сайт №1 – Дома под ключ">
+    {% if errors.title %}<span class="field-error">{{ errors.title }}</span>{% endif %}
+  </label>
+  <label class="field{% if errors.url %} has-error{% endif %}">
+    <span class="field-label">Ссылка на сайт</span>
+    <input type="text" inputmode="url" name="url" value="{{ values.url or '' }}" maxlength="500" placeholder="https://example.ru">
+    {% if errors.url %}<span class="field-error">{{ errors.url }}</span>{% endif %}
+    <span class="field-hint">Необязательно. С ссылкой название в боте становится кликабельным.</span>
+  </label>
+  <label class="field{% if errors.note %} has-error{% endif %}">
+    <span class="field-label">Описание</span>
+    <textarea name="note" rows="2" maxlength="500" placeholder="Необязательно">{{ values.note or '' }}</textarea>
+    {% if errors.note %}<span class="field-error">{{ errors.note }}</span>{% endif %}
+  </label>
+  <label class="check">
+    <input type="checkbox" name="is_demo" value="1"{% if values.is_demo %} checked{% endif %}>
+    <span>Демо-запись — в боте с пометкой «(демо)». Снимите, когда впишете настоящий пример.</span>
+  </label>
+{% endmacro %}
+{% block content %}
+<p><a href="{{ url_for('admin.examples') }}">← Все сферы</a></p>
+<h1>{{ category.button }}</h1>
+
+<form method="post" action="{{ url_for('admin.category_save', category_id=category.id) }}" class="card stack">
+  <h2>Сфера</h2>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% if cat_errors %}<div class="notice notice-error" role="alert">Не сохранено: исправьте отмеченные поля.</div>{% endif %}
+  <label class="field{% if cat_errors.button %} has-error{% endif %}">
+    <span class="field-label">Название кнопки</span>
+    <input type="text" name="button" value="{{ cat_values.button }}" maxlength="60">
+    {% if cat_errors.button %}<span class="field-error">{{ cat_errors.button }}</span>{% endif %}
+  </label>
+  <label class="field{% if cat_errors.topic %} has-error{% endif %}">
+    <span class="field-label">Тематика</span>
+    <input type="text" name="topic" value="{{ cat_values.topic }}" maxlength="200">
+    {% if cat_errors.topic %}<span class="field-error">{{ cat_errors.topic }}</span>{% endif %}
+    <span class="field-hint">Бот пишет: «Вот несколько примеров сайтов по {{ cat_values.topic or '…' }}:»</span>
+  </label>
+  <label class="check">
+    <input type="checkbox" name="active" value="1"{% if cat_values.active %} checked{% endif %}>
+    <span>Показывать в боте</span>
+  </label>
+  <div class="actions">
+    <button type="submit" class="btn btn-primary">Сохранить сферу</button>
+    <a class="btn btn-danger" href="{{ url_for('admin.category_delete', category_id=category.id) }}">Удалить сферу…</a>
+  </div>
+</form>
+
+<h2>Примеры в этой сфере</h2>
+{% for item in items %}
+  {% set values = item_values.get(item.id, item) %}
+  {% set errors = item_errors.get(item.id, {}) %}
+  <div class="card example{% if errors %} has-error{% endif %}" id="i-{{ item.id }}">
+    <div class="example-head">
+      <strong>{{ item.title }}</strong>
+      {% if item.is_demo %}<span class="badge badge-changed">демо</span>{% endif %}
+      <form method="post" action="{{ url_for('admin.item_move', category_id=category.id, item_id=item.id) }}" class="inline push">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" name="direction" value="up" class="btn btn-icon" title="Выше" aria-label="Переместить выше"{% if loop.first %} disabled{% endif %}>↑</button>
+        <button type="submit" name="direction" value="down" class="btn btn-icon" title="Ниже" aria-label="Переместить ниже"{% if loop.last %} disabled{% endif %}>↓</button>
+      </form>
+    </div>
+    <form method="post" action="{{ url_for('admin.item_save', category_id=category.id, item_id=item.id) }}" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {{ item_fields(values, errors, 'i' ~ item.id) }}
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">Сохранить пример</button>
+        <a class="btn btn-danger" href="{{ url_for('admin.item_delete', category_id=category.id, item_id=item.id) }}">Удалить…</a>
+      </div>
+    </form>
+  </div>
+{% else %}
+  <div class="empty card"><p>Примеров пока нет. Бот покажет клиенту, что примеры скоро появятся.</p></div>
+{% endfor %}
+
+<form method="post" action="{{ url_for('admin.item_create', category_id=category.id) }}" class="card stack" id="new">
+  <h2>Добавить пример</h2>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% if new_errors %}<div class="notice notice-error" role="alert">Пример не добавлен: исправьте отмеченные поля.</div>{% endif %}
+  {{ item_fields(new_values, new_errors, 'new') }}
+  <div class="actions"><button type="submit" class="btn btn-primary">Добавить пример</button></div>
+</form>
+{% endblock %}

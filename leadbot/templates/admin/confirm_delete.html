@@ -1,0 +1,13 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<section class="card confirm">
+  <h1>{{ title }}</h1>
+  <p>{{ what }}</p>
+  <form method="post" action="{{ action }}" class="actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-danger">Да, удалить</button>
+    <a class="btn" href="{{ cancel }}">Отмена</a>
+  </form>
+</section>
+{% endblock %}

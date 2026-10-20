@@ -1,0 +1,27 @@
+{% extends "admin/base.html" %}
+{% block title %}Вход{% endblock %}
+{% block header %}{% endblock %}
+{% block content %}
+<section class="login-card card">
+  <h1>Вход в панель бота</h1>
+  <p class="muted">Здесь меняются тексты бота, контакты, примеры работ и видны заявки.</p>
+  {% if locked %}
+    <div class="notice notice-error" role="alert">
+      Слишком много неудачных попыток. Вход с вашего адреса заблокирован на 15 минут —
+      подождите и попробуйте снова.
+    </div>
+  {% endif %}
+  {% if error %}
+    <div class="notice notice-error" role="alert">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="{{ url_for('admin.login', next=next_path if next_path != '/admin' else None) }}" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="field">
+      <span class="field-label">Пароль</span>
+      <input type="password" name="password" autocomplete="current-password" required autofocus>
+    </label>
+    <button type="submit" class="btn btn-primary">Войти</button>
+  </form>
+  <p class="muted small">Пароль задаётся при установке бота (переменная ADMIN_PASSWORD на хостинге).</p>
+</section>
+{% endblock %}

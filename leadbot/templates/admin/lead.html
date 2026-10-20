@@ -1,0 +1,84 @@
+{% extends "admin/base.html" %}
+{% block title %}Заявка №{{ lead.id }}{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('admin.leads_list') }}">← Все заявки</a></p>
+<h1>Заявка №{{ lead.id }} <span class="badge {{ 'badge-new' if lead.status == 'new' else '' }}">{{ status_label }}</span></h1>
+
+<div class="grid-2">
+  <section class="card">
+    <h2>Клиент</h2>
+    <dl class="facts">
+      <dt>Дата</dt><dd>{{ when(lead.created_at) }} (МСК)</dd>
+      <dt>Тип</dt><dd>{{ kind_label }}</dd>
+      <dt>Имя</dt><dd>{{ lead.name or '—' }}</dd>
+      <dt>Телефон</dt><dd>{{ lead.phone or '—' }}</dd>
+      <dt>Telegram</dt>
+      <dd>
+        {% if username_link %}<a href="{{ username_link }}" rel="noopener noreferrer" target="_blank">@{{ lead.username }}</a>
+        {% else %}без имени пользователя{% endif %}
+        {% set full_name = [meta.first_name, meta.last_name]|select|join(' ') %}
+        {% if full_name %}<br><span class="muted">{{ full_name }}</span>{% endif %}
+        <br><span class="muted small">ID: {{ meta.user_id or lead.chat_id }}</span>
+      </dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <h2>Доставка и статус</h2>
+    {% if lead.delivered %}
+      <p><span class="badge badge-ok">доставлена</span> {{ when(lead.delivered_at) }}</p>
+    {% else %}
+      <p><span class="badge badge-error">не доставлена</span></p>
+      {% if lead.delivery_error %}<p class="muted">Причина: {{ lead.delivery_error }}</p>{% endif %}
+    {% endif %}
+    <div class="actions">
+      <form method="post" action="{{ url_for('admin.lead_status', lead_id=lead.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if lead.status == 'new' %}
+          <input type="hidden" name="status" value="processed">
+          <button type="submit" class="btn btn-primary">Отметить обработанной</button>
+        {% else %}
+          <input type="hidden" name="status" value="new">
+          <button type="submit" class="btn">Вернуть в новые</button>
+        {% endif %}
+      </form>
+      <form method="post" action="{{ url_for('admin.lead_resend', lead_id=lead.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn">Отправить владельцу повторно</button>
+      </form>
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <h2>Ответы</h2>
+  {% if lead['items'] %}
+    <dl class="answers">
+      {% for item in lead['items'] %}
+        <dt>{{ item.title }}</dt>
+        <dd>{{ item.answer }}</dd>
+      {% endfor %}
+    </dl>
+  {% else %}
+    <p class="muted">Ответов нет.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Файлы ТЗ</h2>
+  {% if lead.files %}
+    <ul class="files">
+      {% for f in lead.files %}
+        <li>
+          <a class="btn" href="{{ url_for('admin.lead_file', lead_id=lead.id, index=loop.index0) }}">Скачать</a>
+          <span>{{ f.file_name or 'файл' }}</span>
+          {% if f.size %}<span class="muted small">{{ size(f.size) }}</span>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+    <p class="muted small">Файл скачивается через панель из Telegram.</p>
+  {% else %}
+    <p class="muted">Клиент не прикладывал файлов.</p>
+  {% endif %}
+</section>
+{% endblock %}

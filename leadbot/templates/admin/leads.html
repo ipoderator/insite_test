@@ -1,0 +1,64 @@
+{% extends "admin/base.html" %}
+{% block title %}Заявки{% endblock %}
+{% block content %}
+<h1>Заявки</h1>
+<form class="filters card" method="get" action="{{ url_for('admin.leads_list') }}">
+  <label class="field field-inline">
+    <span class="field-label">Тип</span>
+    <select name="kind">
+      <option value="">Все типы</option>
+      {% for value, caption in kinds %}
+        <option value="{{ value }}"{% if value == kind %} selected{% endif %}>{{ caption }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label class="field field-inline">
+    <span class="field-label">Статус</span>
+    <select name="status">
+      <option value="">Все</option>
+      {% for value, caption in statuses %}
+        <option value="{{ value }}"{% if value == status %} selected{% endif %}>{{ caption }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit" class="btn">Показать</button>
+  {% if filtered %}<a class="btn btn-quiet" href="{{ url_for('admin.leads_list') }}">Сбросить</a>{% endif %}
+</form>
+
+{% if not leads %}
+  <div class="empty card">
+    {% if filtered %}
+      <p>По этому фильтру заявок нет.</p>
+    {% else %}
+      <p><strong>Заявок пока нет — пройдите анкету в боте.</strong></p>
+      <p class="muted">Как только клиент отправит анкету, она появится здесь.</p>
+    {% endif %}
+  </div>
+{% else %}
+  <table class="table responsive">
+    <thead>
+      <tr><th>№</th><th>Дата</th><th>Тип</th><th>Имя</th><th>Телефон</th><th>Доставка</th><th>Статус</th></tr>
+    </thead>
+    <tbody>
+      {% for lead in leads %}
+        <tr class="{{ 'row-new' if lead.status == 'new' else '' }}">
+          <td data-label="№"><a href="{{ url_for('admin.lead_card', lead_id=lead.id) }}">№{{ lead.id }}</a></td>
+          <td data-label="Дата">{{ when(lead.created_at) }}</td>
+          <td data-label="Тип">{{ kind_labels.get(lead.kind, lead.kind) }}</td>
+          <td data-label="Имя">{{ lead.name or '—' }}</td>
+          <td data-label="Телефон">{{ lead.phone or '—' }}</td>
+          <td data-label="Доставка">
+            {% if lead.delivered %}<span class="badge badge-ok">доставлена</span>
+            {% else %}<span class="badge badge-error">не доставлена</span>{% endif %}
+          </td>
+          <td data-label="Статус">
+            <span class="badge {{ 'badge-new' if lead.status == 'new' else '' }}">{{ status_labels.get(lead.status, lead.status) }}</span>
+            <a class="row-open" href="{{ url_for('admin.lead_card', lead_id=lead.id) }}">Открыть</a>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if leads|length >= 200 %}<p class="muted small">Показаны последние 200 заявок.</p>{% endif %}
+{% endif %}
+{% endblock %}

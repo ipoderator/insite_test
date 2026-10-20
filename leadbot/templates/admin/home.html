@@ -1,0 +1,41 @@
+{% extends "admin/base.html" %}
+{% block title %}Главная{% endblock %}
+{% block content %}
+<h1>Панель бота</h1>
+<p class="lead-text">Всё, что вы здесь сохраняете, бот использует сразу — со следующего сообщения клиента.</p>
+
+<div class="stats">
+  <a class="stat card" href="{{ url_for('admin.leads_list', status='new') }}">
+    <span class="stat-value">{{ new_count }}</span>
+    <span class="stat-label">новых заявок</span>
+  </a>
+  <a class="stat card{% if undelivered_count %} stat-warn{% endif %}" href="{{ url_for('admin.leads_list') }}">
+    <span class="stat-value">{{ undelivered_count }}</span>
+    <span class="stat-label">не доставлено в Telegram</span>
+  </a>
+  <a class="stat card{% if not recipient %} stat-warn{% endif %}" href="{{ url_for('admin.recipient') }}">
+    <span class="stat-value">{{ 'привязан' if recipient else 'нет' }}</span>
+    <span class="stat-label">получатель заявок</span>
+  </a>
+  <a class="stat card" href="{{ url_for('admin.texts_page') }}">
+    <span class="stat-value">{{ changed_texts }}</span>
+    <span class="stat-label">текстов изменено</span>
+  </a>
+</div>
+
+{% if not recipient %}
+  <div class="notice notice-error">Получатель заявок не привязан: заявки сохраняются здесь, но не приходят вам в Telegram.
+    <a href="{{ url_for('admin.recipient') }}">Привязать чат</a></div>
+{% endif %}
+
+<div class="tiles">
+  <a class="tile card" href="{{ url_for('admin.leads_list') }}"><h2>Заявки</h2><p>Все анкеты клиентов, файлы ТЗ, повторная отправка.</p></a>
+  <a class="tile card" href="{{ url_for('admin.texts_page') }}"><h2>Тексты</h2><p>Вопросы, кнопки, подсказки и сообщения бота.</p></a>
+  <a class="tile card" href="{{ url_for('admin.info_blocks') }}"><h2>Информационные блоки</h2><p>Приветствие, блок о конфиденциальности, финальное сообщение.</p></a>
+  <a class="tile card" href="{{ url_for('admin.contacts') }}"><h2>Контакты и ссылки</h2><p>Telegram, телефон, email и ссылка на политику.</p></a>
+  <a class="tile card" href="{{ url_for('admin.examples') }}"><h2>Примеры работ</h2><p>Сферы и сайты, которые бот показывает клиентам.</p></a>
+  <a class="tile card" href="{{ url_for('admin.recipient') }}"><h2>Получатель заявок</h2><p>Куда бот присылает заявки: ваш чат или рабочая группа.</p></a>
+  <a class="tile card" href="{{ url_for('admin.policy') }}"><h2>Политика (демо)</h2><p>Текст страницы политики конфиденциальности.</p></a>
+  <a class="tile card" href="{{ url_for('admin.help_page') }}"><h2>Как пользоваться</h2><p>Короткая инструкция по панели.</p></a>
+</div>
+{% endblock %}

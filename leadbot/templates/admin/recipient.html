@@ -1,0 +1,41 @@
+{% extends "admin/base.html" %}
+{% block title %}Получатель заявок{% endblock %}
+{% block content %}
+<h1>Получатель заявок</h1>
+<p class="lead-text">Чат, в который бот присылает каждую новую заявку с файлами ТЗ: ваш личный чат с ботом
+  или рабочая группа, куда вы добавили бота.</p>
+
+<section class="card">
+  <h2>Сейчас</h2>
+  {% if chat %}
+    <p><span class="badge badge-ok">привязан</span>
+      {{ 'Рабочая группа' if is_group else 'Личный чат' }}, ID {{ chat }}</p>
+    <div class="actions">
+      <form method="post" action="{{ url_for('admin.recipient_test') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">Тестовое сообщение</button>
+      </form>
+      <form method="post" action="{{ url_for('admin.recipient_unbind') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-danger">Отвязать</button>
+      </form>
+    </div>
+  {% else %}
+    <p><span class="badge badge-error">не привязан</span> Заявки сохраняются в панели, но в Telegram не приходят.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>{{ 'Привязать другой чат' if chat else 'Как привязать' }}</h2>
+  <ol class="steps">
+    <li>Откройте бота в Telegram — в личном чате или в группе, куда вы его добавили.</li>
+    <li>Отправьте сообщение: <code class="bind-code">/owner {{ code }}</code></li>
+    <li>Бот ответит, что чат привязан. Обновите эту страницу.</li>
+  </ol>
+  <p class="muted small">После привязки код меняется сам. Если код мог увидеть посторонний — смените его.</p>
+  <form method="post" action="{{ url_for('admin.recipient_code') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn">Сменить код</button>
+  </form>
+</section>
+{% endblock %}

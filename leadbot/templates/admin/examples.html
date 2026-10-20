@@ -1,0 +1,51 @@
+{% extends "admin/base.html" %}
+{% block title %}Примеры работ{% endblock %}
+{% block content %}
+<h1>Примеры работ</h1>
+<p class="lead-text">Сферы — это кнопки раздела «Примеры наших работ» в боте, в том же порядке, что здесь.
+  Откройте сферу, чтобы изменить её примеры.</p>
+
+<ul class="list">
+  {% for cat in categories %}
+    <li class="list-row card{% if not cat.active %} is-off{% endif %}" id="c-{{ cat.id }}">
+      <div class="list-main">
+        <a class="list-title" href="{{ url_for('admin.category', category_id=cat.id) }}">{{ cat.button }}</a>
+        <span class="muted small">по {{ cat.topic }} · примеров: {{ cat.items_count }}</span>
+        {% if not cat.active %}<span class="badge badge-error">скрыта в боте</span>{% endif %}
+      </div>
+      <div class="list-actions">
+        <form method="post" action="{{ url_for('admin.category_move', category_id=cat.id) }}" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" name="direction" value="up" class="btn btn-icon" title="Выше" aria-label="Переместить выше"{% if loop.first %} disabled{% endif %}>↑</button>
+          <button type="submit" name="direction" value="down" class="btn btn-icon" title="Ниже" aria-label="Переместить ниже"{% if loop.last %} disabled{% endif %}>↓</button>
+        </form>
+        <form method="post" action="{{ url_for('admin.category_toggle', category_id=cat.id) }}" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn">{{ 'Скрыть' if cat.active else 'Показать' }}</button>
+        </form>
+        <a class="btn" href="{{ url_for('admin.category', category_id=cat.id) }}">Изменить</a>
+      </div>
+    </li>
+  {% else %}
+    <li class="empty card"><p>Сфер пока нет — добавьте первую ниже.</p></li>
+  {% endfor %}
+</ul>
+
+<form method="post" action="{{ url_for('admin.category_create') }}" class="card stack" id="new">
+  <h2>Добавить сферу</h2>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% if errors %}<div class="notice notice-error" role="alert">Сфера не добавлена: исправьте отмеченные поля.</div>{% endif %}
+  <label class="field{% if errors.button %} has-error{% endif %}">
+    <span class="field-label">Название кнопки</span>
+    <input type="text" name="button" value="{{ values.button or '' }}" maxlength="60" placeholder="🏠 Недвижимость">
+    {% if errors.button %}<span class="field-error">{{ errors.button }}</span>{% endif %}
+  </label>
+  <label class="field{% if errors.topic %} has-error{% endif %}">
+    <span class="field-label">Тематика</span>
+    <input type="text" name="topic" value="{{ values.topic or '' }}" maxlength="200" placeholder="тематике недвижимости">
+    {% if errors.topic %}<span class="field-error">{{ errors.topic }}</span>{% endif %}
+    <span class="field-hint">Продолжение фразы «Вот несколько примеров сайтов по …:»</span>
+  </label>
+  <div class="actions"><button type="submit" class="btn btn-primary">Добавить сферу</button></div>
+</form>
+{% endblock %}

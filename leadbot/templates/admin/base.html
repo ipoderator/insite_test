@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}Панель{% endblock %} — панель бота</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+</head>
+<body>
+{% set nav = [
+  ('admin.home', 'Главная', ['admin.home']),
+  ('admin.leads_list', 'Заявки', ['admin.leads_list', 'admin.lead_card']),
+  ('admin.texts_page', 'Тексты', ['admin.texts_page', 'admin.text_save', 'admin.text_reset']),
+  ('admin.info_blocks', 'Информационные блоки', ['admin.info_blocks']),
+  ('admin.contacts', 'Контакты и ссылки', ['admin.contacts']),
+  ('admin.examples', 'Примеры работ', ['admin.examples', 'admin.category', 'admin.category_save',
+     'admin.category_create', 'admin.category_delete', 'admin.item_create', 'admin.item_save',
+     'admin.item_delete']),
+  ('admin.recipient', 'Получатель заявок', ['admin.recipient']),
+  ('admin.policy', 'Политика (демо)', ['admin.policy']),
+  ('admin.help_page', 'Как пользоваться', ['admin.help_page']),
+] %}
+{% block header %}
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="{{ url_for('admin.home') }}">Панель бота</a>
+    <form class="logout" method="post" action="{{ url_for('admin.logout') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-quiet">Выйти</button>
+    </form>
+  </div>
+  <nav class="nav" aria-label="Разделы панели">
+    {% for endpoint, caption, active in nav %}
+      <a href="{{ url_for(endpoint) }}"{% if nav_endpoint in active %} class="active" aria-current="page"{% endif %}>{{ caption }}</a>
+    {% endfor %}
+  </nav>
+</header>
+{% endblock %}
+<main class="page">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="notice notice-{{ 'error' if category == 'error' else 'ok' }}" role="status">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

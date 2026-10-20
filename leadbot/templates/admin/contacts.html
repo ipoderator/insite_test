@@ -1,0 +1,24 @@
+{% extends "admin/base.html" %}
+{% block title %}Контакты и ссылки{% endblock %}
+{% macro field(name, caption, hint, type='text', placeholder='') %}
+  <label class="field{% if errors.get(name) %} has-error{% endif %}">
+    <span class="field-label">{{ caption }}</span>
+    <input type="{{ type }}" name="{{ name }}" value="{{ values.get(name, '') }}" placeholder="{{ placeholder }}" maxlength="500">
+    {% if errors.get(name) %}<span class="field-error" role="alert">{{ errors[name] }}</span>{% endif %}
+    <span class="field-hint">{{ hint }}</span>
+  </label>
+{% endmacro %}
+{% block content %}
+<h1>Контакты и ссылки</h1>
+<p class="lead-text">Контакты бот показывает на экране «Связаться с нами». Пустое поле в боте не показывается.</p>
+{% if errors %}<div class="notice notice-error" role="alert">Не сохранено: исправьте отмеченные поля.</div>{% endif %}
+<form method="post" action="{{ url_for('admin.contacts') }}" class="card stack">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {{ field('contact_telegram', 'Telegram', 'Имя пользователя или ссылка: @site_it или t.me/site_it', placeholder='@site_it') }}
+  {{ field('contact_phone', 'Телефон', 'Как показывать клиенту, например +7 999 155-10-43', type='tel', placeholder='+7 999 155-10-43') }}
+  {{ field('contact_email', 'Email', 'Например, site-it@mail.ru', type='email', placeholder='site-it@mail.ru') }}
+  {{ field('privacy_url', 'Ссылка на политику конфиденциальности', 'Ставится в блок «Перед началом». Если оставить пустым, бот ведёт на демонстрационную страницу политики.', placeholder='https://example.ru/privacy') }}
+  <p class="muted small">Сейчас бот ведёт по ссылке: <a href="{{ policy_link }}" target="_blank" rel="noopener noreferrer">{{ policy_link }}</a></p>
+  <div class="actions"><button type="submit" class="btn btn-primary">Сохранить</button></div>
+</form>
+{% endblock %}

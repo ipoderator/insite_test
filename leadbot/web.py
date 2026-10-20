@@ -1,4 +1,4 @@
-"""Flask application: Telegram webhook, health check (admin panel is added later).
+"""Flask application: Telegram webhook, health check, demo privacy page, admin panel.
 
 The webhook hands every update to ``LeadbotState.update_handler``. By default it is
 ``Engine(storage, tg).handle_update``; tests pass their own handler to ``create_app`` or
@@ -11,8 +11,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from flask import Flask, abort, jsonify, request
+from flask import Flask, abort, jsonify, render_template, request
 
+from .admin import register_admin
+from .admin.content import DEFAULT_PRIVACY_PAGE, PRIVACY_PAGE_SETTING
 from .config import Config
 from .engine import Engine
 from .storage import Storage
@@ -57,6 +59,19 @@ def create_app(config: Config, storage: Optional[Storage] = None, tg: Any = None
         update_handler = Engine(storage, tg, public_base_url=config.public_base_url).handle_update
     state = LeadbotState(config=config, storage=storage, tg=tg, update_handler=update_handler)
     app.extensions[EXTENSION_KEY] = state
+
+    register_admin(app)
+
+    @app.get("/privacy")
+    def privacy_page():
+        text = (storage.get_setting(PRIVACY_PAGE_SETTING) or "").strip() or DEFAULT_PRIVACY_PAGE
+        resp = app.make_response(render_template("privacy.html", text=text))
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'none'; style-src 'self'; frame-ancestors 'none'; "
+            "base-uri 'none'; form-action 'none'")
+        return resp
 
     @app.get("/health")
     def health():
