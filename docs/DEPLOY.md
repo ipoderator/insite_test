@@ -83,7 +83,7 @@ webhook и вход в панель не ломаются от повторно�
    и серверный `.env` (без `PA_*`); `.venv`, `.git`, `.autopilot`, `data`, тесты, скрипты и
    документация не загружаются;
 3. создаёт веб-приложение `ipoderator.pythonanywhere.com`, если его ещё нет (Python 3.11;
-   другая версия — флаг `--python python310`);
+   другая версия — флаг `--python python310`, действует только при создании; у существующего приложения версию меняют на вкладке Web);
 4. пишет WSGI-файл `/var/www/ipoderator_pythonanywhere_com_wsgi.py`, включает принудительный
    HTTPS, перезапускает приложение и ждёт ответа `/health`;
 5. ставит webhook `https://ipoderator.pythonanywhere.com/tg/webhook` с секретом и команды бота

@@ -203,16 +203,22 @@ def _run(args: argparse.Namespace, console: Console, session: Any,
     console.ok(f"Серверный .env записан ({target_dir}/.env, значения не показываются)")
 
     # 3. web app
-    domains = [app.get("domain_name") for app in pa.list_webapps() if isinstance(app, dict)]
-    if domain in domains:
+    apps = {app.get("domain_name"): app for app in pa.list_webapps() if isinstance(app, dict)}
+    if domain in apps:
         console.ok(f"Веб-приложение {domain} уже есть")
+        current = str(apps[domain].get("python_version") or "")
+        if current and current.replace("python", "").replace(".", "") != \
+                args.python.replace("python", ""):
+            console.info(f"У него Python {current}, а запрошен {args.python}: версия "
+                         f"существующего приложения не меняется — при необходимости смените "
+                         f"её на вкладке Web на PythonAnywhere.")
     else:
         pa.create_webapp(domain, args.python)
         console.ok(f"Веб-приложение {domain} создано ({args.python})")
     pa.upload(wsgi_path, wsgi_source.encode())
     console.ok(f"WSGI-файл записан: {wsgi_path}")
-    pa.patch_webapp(domain, source_directory=target_dir, force_https="true",
-                    python_version=args.python)
+    # python_version is set only on creation: PATCH rejects the "python311" form POST takes
+    pa.patch_webapp(domain, source_directory=target_dir, force_https="true")
     console.ok("Включён принудительный HTTPS, указана папка кода")
     pa.reload(domain)
     console.ok("Веб-приложение перезапущено")

@@ -141,7 +141,13 @@ class FakePythonAnywhere:
                 self.reloads += 1
                 return FakeResponse(200, {"status": "OK"})
             if not match.group(2) and method == "PATCH":
-                self.patches.append(dict(kw.get("data") or {}))
+                data = dict(kw.get("data") or {})
+                if "python_version" in data and not re.fullmatch(r"\d\.\d+",
+                                                                 data["python_version"]):
+                    # the real API: PATCH does not take the "python311" form that POST takes
+                    return FakeResponse(400, {"python_version": [
+                        f'"{data["python_version"]}" is not a valid choice.']})
+                self.patches.append(data)
                 return FakeResponse(200, self.webapps[match.group(1)])
         return FakeResponse(404, {"detail": "Not found."})
 
@@ -593,3 +599,15 @@ def test_console_shows_the_lead_sent_to_the_owner(tmp_path):
     assert code == 0
     assert "[владельцу]" in out, out[-3000:]
     assert "+79000000000" in out
+
+
+def test_deploy_patch_does_not_send_python_version_so_create_and_redeploy_pass(tmp_path):
+    pa, bot, net = deploy_world()
+    env = write_env(tmp_path)
+    code, out = run_deploy(env, net)
+    assert code == 0, out
+    code, out = run_deploy(env, net)  # the web app already exists now
+    assert code == 0, out
+    assert len(pa.patches) == 2
+    assert all("python_version" not in p for p in pa.patches)
+    assert pa.created == [{"domain_name": DOMAIN, "python_version": "python311"}]
