@@ -231,8 +231,8 @@ class Panel:
 
     def text_value(self, key: str) -> Tuple[str, bool]:
         """(current value, changed in the panel?) of a bot text."""
-        group = TEXTS[key].group
-        resp = self.get(f"/admin/texts?group={group}")
+        group, step = TEXTS[key].group, key.split(".", 1)[0]  # a large group: by steps
+        resp = self.get(f"/admin/texts?group={group}&step={step}")
         if resp.status_code != 200:
             raise ScriptError(f"раздел «Тексты» не открылся (HTTP {resp.status_code})")
         form = re.search(r'<form class="([^"]*)"\s+id="t-' + re.escape(key) + r'"(.*?)</form>',

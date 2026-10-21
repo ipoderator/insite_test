@@ -4,12 +4,29 @@
 <h1>Панель бота</h1>
 <p class="lead-text">Всё, что вы здесь сохраняете, бот использует сразу — со следующего сообщения клиента.</p>
 
+{% if gaps %}
+  <section class="card gaps" aria-labelledby="gaps-title">
+    <h2 id="gaps-title">Перед запуском осталось заполнить: {{ gaps|length }}</h2>
+    <p class="muted small">Пока здесь есть пункты, бот работает на демонстрационных данных.</p>
+    <ol class="gap-list">
+      {% for gap in gaps %}
+        <li>
+          <div class="gap-text"><strong>{{ gap.title }}</strong><span class="muted">{{ gap.detail }}</span></div>
+          <a class="btn" href="{{ url_for(gap.endpoint) }}">{{ gap.action }}</a>
+        </li>
+      {% endfor %}
+    </ol>
+  </section>
+{% else %}
+  <div class="notice notice-ok">Демо-данных не осталось: получатель привязан, политика и примеры работ — ваши.</div>
+{% endif %}
+
 <div class="stats">
   <a class="stat card" href="{{ url_for('admin.leads_list', status='new') }}">
     <span class="stat-value">{{ new_count }}</span>
     <span class="stat-label">новых заявок</span>
   </a>
-  <a class="stat card{% if undelivered_count %} stat-warn{% endif %}" href="{{ url_for('admin.leads_list') }}">
+  <a class="stat card{% if undelivered_count %} stat-warn{% endif %}" href="{{ url_for('admin.leads_list', delivery='no') }}">
     <span class="stat-value">{{ undelivered_count }}</span>
     <span class="stat-label">не доставлено в Telegram</span>
   </a>
@@ -17,16 +34,12 @@
     <span class="stat-value">{{ 'привязан' if recipient else 'нет' }}</span>
     <span class="stat-label">получатель заявок</span>
   </a>
-  <a class="stat card" href="{{ url_for('admin.texts_page') }}">
+  <a class="stat card" href="{{ url_for('admin.texts_page', changed='1') }}">
     <span class="stat-value">{{ changed_texts }}</span>
     <span class="stat-label">текстов изменено</span>
   </a>
 </div>
 
-{% if not recipient %}
-  <div class="notice notice-error">Получатель заявок не привязан: заявки сохраняются здесь, но не приходят вам в Telegram.
-    <a href="{{ url_for('admin.recipient') }}">Привязать чат</a></div>
-{% endif %}
 
 <div class="tiles">
   <a class="tile card" href="{{ url_for('admin.leads_list') }}"><h2>Заявки</h2><p>Все анкеты клиентов, файлы ТЗ, повторная отправка.</p></a>

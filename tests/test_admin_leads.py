@@ -1,14 +1,19 @@
 """Admin panel: «Заявки» (list, filters, card, status, resend, file download) and
 «Получатель заявок» (bind code, test message, unbind, new code)."""
 import logging
+import re
+from datetime import datetime, timezone
+from urllib.parse import quote
 
 import pytest
 import requests
 
+from leadbot.admin import content
 from leadbot.leads import NO_RECIPIENT_ERROR
 from leadbot.telegram import TelegramError
 from tests.sim import label
 from tests.test_admin_support import Panel, path_of
+from tests.test_storage import Clock
 
 OWNER = -100777
 
@@ -267,3 +272,88 @@ def test_new_code_replaces_the_old_one(panel):
     owner = panel.bot(chat_id=OWNER, chat_type="group", username="owner")
     owner.send(f"/owner {old}")
     assert (panel.storage.get_setting("owner_chat_id") or "") == ""
+
+
+# -- search, dates, pages -----------------------------------------------------------------
+
+def lead_numbers(page: str):
+    return [int(n) for n in re.findall(r'<td data-label="№"><a [^>]+>№(\d+)</a>', page)]
+
+
+def test_search_by_name_phone_and_number(panel):
+    anna = add_lead(panel, name="Анна Петрова", phone="+79991234567", username="anna_client")
+    boris = add_lead(panel, name="Борис", phone="+79005550011", username="bob")
+    maria = add_lead(panel, name="МАРИЯ", phone=None, username=None)
+    assert lead_numbers(panel.page("/admin/leads?q=петрова")) == [anna]
+    assert lead_numbers(panel.page("/admin/leads?q=мария")) == [maria]  # Cyrillic, any case
+    assert lead_numbers(panel.page("/admin/leads?q=@BOB")) == [boris]
+    assert lead_numbers(panel.page("/admin/leads?q=555-00")) == [boris]
+    assert lead_numbers(panel.page("/admin/leads?q=8 999 123")) == [anna]  # 8… is +7…
+    assert lead_numbers(panel.page(f"/admin/leads?q=№{boris}")) == [boris]
+    assert lead_numbers(panel.page(f"/admin/leads?q=%23{maria}")) == [maria]
+    assert maria in lead_numbers(panel.page(f"/admin/leads?q={maria}"))  # number or phone
+    page = panel.page("/admin/leads?q=Анна")
+    assert 'value="Анна"' in page and "Найдено: 1" in page and "Сбросить" in page
+    # LIKE wildcards and odd input are taken literally
+    for query in ("anna%", "a_n", "№abc", "№", "#99999999999", "99999999999999999999"):
+        assert "По этому фильтру заявок нет" in panel.page(f"/admin/leads?q={quote(query)}")
+
+
+def test_filter_by_dates_in_moscow_time(tmp_path):
+    clock = Clock()
+    clock.now = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+    p = Panel(tmp_path, clock=clock)
+    p.login()
+    first = add_lead(p, name="Первая")    # 19.10, 15:00 МСК
+    clock.now = datetime(2026, 10, 20, 21, 30, tzinfo=timezone.utc)
+    late = add_lead(p, name="Поздняя")    # 21.10, 00:30 МСК — already the next day
+    clock.now = datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc)
+    last = add_lead(p, name="Последняя")  # 22.10
+    assert lead_numbers(p.page("/admin/leads?from=2026-10-21")) == [last, late]
+    assert lead_numbers(p.page("/admin/leads?to=2026-10-20")) == [first]
+    assert lead_numbers(p.page("/admin/leads?from=2026-10-21&to=2026-10-21")) == [late]
+    # swapped bounds are put in order, a broken date is ignored
+    assert lead_numbers(p.page("/admin/leads?from=2026-10-22&to=2026-10-19")) == \
+        [last, late, first]
+    page = p.page("/admin/leads?from=2026-13-45&to=вчера")
+    assert lead_numbers(page) == [last, late, first] and "Сбросить" not in page
+
+
+def test_delivery_filter(panel):
+    sent = add_lead(panel, name="Доставленная")
+    panel.storage.set_lead_delivery(sent, True, None)
+    lost = add_lead(panel, name="Потерянная")
+    assert lead_numbers(panel.page("/admin/leads?delivery=no")) == [lost]
+    assert lead_numbers(panel.page("/admin/leads?delivery=yes")) == [sent]
+    assert lead_numbers(panel.page("/admin/leads?delivery=maybe")) == [lost, sent]
+    assert "delivery=no" in panel.page("/admin")  # the «не доставлено» counter leads here
+
+
+def test_leads_are_shown_page_by_page(panel):
+    size = content.LEADS_PAGE_SIZE
+    ids = [add_lead(panel, name="Анна" if n % 2 else "Борис") for n in range(size * 2 + 7)]
+    annas = (size * 2 + 7) // 2
+    newest_first = ids[::-1]
+    page = panel.page("/admin/leads")
+    assert lead_numbers(page) == newest_first[:size]
+    assert f"Всего заявок: {len(ids)}" in page and "страница 1 из 3" in page
+    assert 'href="/admin/leads?page=2"' in page and "← Новее" not in page
+    assert lead_numbers(panel.page("/admin/leads?page=3")) == newest_first[size * 2:]
+    assert lead_numbers(panel.page("/admin/leads?page=99")) == newest_first[size * 2:]
+    for bad in ("0", "-1", "abc", "²", "9" * 30):
+        assert panel.get(f"/admin/leads?page={quote(bad)}").status_code == 200
+    # page links keep the filters
+    page = panel.page("/admin/leads?q=анна&status=new")
+    assert len(lead_numbers(page)) == size and f"Найдено: {annas}" in page
+    assert "page=2" in page and "q=%D0%B0%D0%BD%D0%BD%D0%B0" in page and "status=new" in page
+    assert "Показаны последние 200" not in page
+
+
+def test_home_counts_every_lead_not_only_the_latest(panel):
+    for n in range(205):
+        lead = add_lead(panel)
+        if n < 3:
+            panel.storage.set_lead_delivery(lead, True, None)
+    page = panel.page("/admin")
+    values = re.findall(r'<span class="stat-value">([^<]+)</span>', page)
+    assert values[:2] == ["205", "202"]

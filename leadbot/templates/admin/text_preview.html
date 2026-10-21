@@ -1,0 +1,42 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import tg_messages, view_fields %}
+{% block title %}Предпросмотр{% endblock %}
+{% block content %}
+<p><a href="{{ back }}">← Назад к текстам, без сохранения</a></p>
+<h1>Предпросмотр: {{ label }}</h1>
+<p class="lead-text">Так клиент увидит этот экран в Telegram. Изменение ещё не опубликовано — бот
+  использует его только после кнопки «Опубликовать».</p>
+{% if unchanged %}<div class="notice">Текст не изменился — он совпадает с тем, что бот показывает сейчас.</div>{% endif %}
+
+<div class="grid-2 compare">
+  <section class="card">
+    <h2>Сейчас в боте</h2>
+    {{ tg_messages(before) }}
+  </section>
+  <section class="card card-accent">
+    <h2>После публикации</h2>
+    {{ tg_messages(after) }}
+  </section>
+</div>
+<p class="muted small">Примерный вид: имя клиента, отметки и ссылки — для примера.</p>
+
+<form method="post" action="{{ url_for('admin.text_save', key=key) }}" class="card stack" id="t-{{ key }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {{ view_fields(view) }}
+  <label class="field">
+    <span class="field-label">Текст</span>
+    {% if kind == 'button' %}
+      <input type="text" name="value" value="{{ value }}" maxlength="{{ limit }}" required>
+    {% else %}
+      <textarea name="value" rows="{{ [[(value|length // 70) + value.count('\n') + 1, 3]|max, 14]|min }}" maxlength="{{ limit }}" required>{{ value }}</textarea>
+    {% endif %}
+    <span class="field-hint">Можно поправить и обновить предпросмотр.</span>
+  </label>
+  <div class="actions">
+    <button type="submit" class="btn btn-primary">Опубликовать</button>
+    <button type="submit" class="btn" formaction="{{ url_for('admin.text_preview', key=key) }}">Обновить предпросмотр</button>
+    <a class="btn btn-quiet" href="{{ back }}">Отмена</a>
+  </div>
+  <p class="muted small">После публикации прежний вариант останется в истории изменений — его можно вернуть одной кнопкой.</p>
+</form>
+{% endblock %}

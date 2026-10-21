@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import logging
+import math
 import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
@@ -16,8 +17,10 @@ from flask import (Blueprint, Response, abort, current_app, flash, redirect, ren
                    request, url_for)
 
 from .. import leads
+from ..scenario import NODES
+from ..storage import HISTORY_SETTING, HISTORY_TEXT
 from ..texts import GROUPS, TEXTS, TextStore
-from . import auth, content
+from . import auth, content, preview
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +30,8 @@ PUBLIC_ENDPOINTS = frozenset({"admin.login"})
 GROUP_NAMES = dict(GROUPS)
 INFO_GROUP = "info"
 SEARCH_LIMIT = 100
+HISTORY_SHOWN = 5   # versions listed under a text
+MAX_PAGE = 100000
 DOWNLOAD_TIMEOUT = (10, 60)
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{1,32}$")
 
@@ -140,13 +145,16 @@ def logout():
 @admin_bp.get("/")
 def home():
     storage = _storage()
-    recent = storage.list_leads(limit=200)
+    categories = storage.list_categories()
+    for cat in categories:
+        cat["items"] = storage.list_items(cat["id"])
     return render_template(
         "admin/home.html",
-        new_count=sum(1 for lead in recent if lead["status"] == "new"),
-        undelivered_count=sum(1 for lead in recent if not lead["delivered"]),
+        new_count=storage.count_leads(status="new"),
+        undelivered_count=storage.count_leads(delivered=False),
         recipient=(storage.get_setting("owner_chat_id") or "").strip(),
         changed_texts=len(storage.all_text_overrides()),
+        gaps=content.handover_gaps(storage.all_settings(), categories),
     )
 
 
@@ -167,17 +175,45 @@ def _kind_label(texts: TextStore, kind: str) -> str:
 @admin_bp.get("/leads")
 def leads_list():
     storage, texts = _storage(), _texts()
-    kind = request.args.get("kind", "")
-    status = request.args.get("status", "")
+    args = request.args
+    kind = args.get("kind", "")
     kind = kind if kind in content.LEAD_KINDS else ""
+    status = args.get("status", "")
     status = status if status in dict(content.LEAD_STATUSES) else ""
-    rows = storage.list_leads(kind=kind or None, status=status or None, limit=200)
+    delivery = args.get("delivery", "")
+    delivery = delivery if delivery in dict(content.LEAD_DELIVERY) else ""
+    query = " ".join((args.get("q") or "").split())[:content.LEAD_QUERY_LIMIT]
+    day_from, day_to = content.parse_day(args.get("from")), content.parse_day(args.get("to"))
+    if day_from and day_to and day_from > day_to:
+        day_from, day_to = day_to, day_from
+    page_arg = args.get("page", "")
+    page = min(max(int(page_arg), 1), MAX_PAGE) if page_arg.isascii() and page_arg.isdigit() \
+        else 1
+
+    filters = {
+        "kind": kind or None, "status": status or None,
+        "delivered": {"yes": True, "no": False}.get(delivery), "query": query,
+        "created_from": content.moscow_day_start(day_from) if day_from else None,
+        "created_to": content.moscow_day_after(day_to) if day_to else None,
+    }
+    size = content.LEADS_PAGE_SIZE
+    rows, total = storage.find_leads(**filters, limit=size, offset=(page - 1) * size)
+    pages = max(1, math.ceil(total / size))
+    if page > pages:
+        page = pages
+        rows, total = storage.find_leads(**filters, limit=size, offset=(page - 1) * size)
+    link_args = {name: value for name, value in (
+        ("q", query), ("kind", kind), ("status", status), ("delivery", delivery),
+        ("from", day_from.isoformat() if day_from else ""),
+        ("to", day_to.isoformat() if day_to else "")) if value}
     return render_template(
-        "admin/leads.html", leads=rows, kind=kind, status=status,
+        "admin/leads.html", leads=rows, kind=kind, status=status, delivery=delivery,
+        query=query, day_from=link_args.get("from", ""), day_to=link_args.get("to", ""),
         kinds=[(k, _kind_label(texts, k)) for k in content.LEAD_KINDS],
         kind_labels={k: _kind_label(texts, k) for k in content.LEAD_KINDS},
         statuses=content.LEAD_STATUSES, status_labels=dict(content.LEAD_STATUSES),
-        when=content.moscow_time, filtered=bool(kind or status))
+        deliveries=content.LEAD_DELIVERY, when=content.moscow_time,
+        filtered=bool(link_args), link_args=link_args, page=page, pages=pages, total=total)
 
 
 def _lead_or_404(lead_id: int) -> dict:
@@ -278,6 +314,8 @@ def lead_file(lead_id: int, index: int):
 
 def _text_rows(keys: List[str], texts: TextStore, overrides: Dict[str, str],
                errors: Dict[str, str], submitted: Dict[str, str]) -> List[Dict[str, Any]]:
+    storage = _storage()
+    history_counts = storage.history_counts(HISTORY_TEXT)
     rows = []
     for key in keys:
         text_def = TEXTS[key]
@@ -286,6 +324,7 @@ def _text_rows(keys: List[str], texts: TextStore, overrides: Dict[str, str],
             "label": text_def.label,
             "kind": "button" if content.is_button(text_def) else text_def.kind,
             "group": GROUP_NAMES.get(text_def.group, text_def.group),
+            "important": text_def.group == INFO_GROUP,
             "default": text_def.default,
             "value": submitted.get(key, overrides.get(key, text_def.default)),
             "changed": key in overrides,
@@ -293,6 +332,9 @@ def _text_rows(keys: List[str], texts: TextStore, overrides: Dict[str, str],
             "placeholders": [(p, content.PLACEHOLDER_HINTS.get(p, ""))
                              for p in content.placeholders(text_def.default)],
             "error": errors.get(key),
+            "history_count": history_counts.get(key, 0),
+            "history": (storage.history(HISTORY_TEXT, [key], HISTORY_SHOWN)
+                        if history_counts.get(key) else []),
         })
     return rows
 
@@ -303,69 +345,114 @@ def _matches(key: str, query: str, overrides: Dict[str, str]) -> bool:
     return query.casefold() in haystack.casefold()
 
 
-def _render_texts(section: str, group: str, query: str, errors: Optional[Dict[str, str]] = None,
+def _text_view(key: Optional[str] = None) -> Dict[str, Any]:
+    """The texts page to show: section, group, step, search, filters; for a text form — the
+    page the form is on (its hidden fields), moved to the text's own group and step."""
+    source = request.form if request.method == "POST" else request.args
+    view: Dict[str, Any] = {
+        "section": INFO_GROUP if source.get("section") == INFO_GROUP else "texts",
+        "q": " ".join((source.get("q") or "").split())[:SEARCH_LIMIT],
+        "changed": source.get("changed") == "1",
+        "show_keys": source.get("keys") == "1",
+    }
+    group = source.get("group", "")
+    group = group if group in GROUP_NAMES else GROUPS[0][0]
+    step = source.get("step", "")
+    if key is not None:
+        if view["section"] == INFO_GROUP and TEXTS[key].group != INFO_GROUP:
+            view["section"] = "texts"
+        if view["section"] != INFO_GROUP and not (view["q"] or view["changed"]):
+            group, step = TEXTS[key].group, content.step_of(key)
+    steps = content.group_steps(group) if content.uses_steps(group) else []
+    view["group"] = group
+    view["step"] = step if step in steps else (steps[0] if steps else "")
+    return view
+
+
+def _texts_url(view: Dict[str, Any], key: Optional[str] = None) -> str:
+    args: Dict[str, str] = {}
+    if view["section"] != INFO_GROUP:
+        if view["q"] or view["changed"]:
+            if view["q"]:
+                args["q"] = view["q"]
+            if view["changed"]:
+                args["changed"] = "1"
+        else:
+            args["group"] = view["group"]
+            if view["step"]:
+                args["step"] = view["step"]
+    if view["show_keys"]:
+        args["keys"] = "1"
+    endpoint = "admin.info_blocks" if view["section"] == INFO_GROUP else "admin.texts_page"
+    return url_for(endpoint, _anchor=("t-" + key) if key else None, **args)
+
+
+def _render_texts(view: Dict[str, Any], errors: Optional[Dict[str, str]] = None,
                   submitted: Optional[Dict[str, str]] = None, status: int = 200):
     storage = _storage()
     texts = TextStore(storage)
     overrides = storage.all_text_overrides()
-    if section == INFO_GROUP:
+    group, query = view["group"], view["q"]
+    steps: List[Dict[str, Any]] = []
+    screen: List[preview.Message] = []
+    if view["section"] == INFO_GROUP:
         keys = [k for k, d in TEXTS.items() if d.group == INFO_GROUP]
-        group = INFO_GROUP
-    elif query:
-        keys = [k for k in TEXTS if _matches(k, query, overrides)]
+    elif query or view["changed"]:
+        keys = [k for k in TEXTS if (not query or _matches(k, query, overrides))
+                and (not view["changed"] or k in overrides)]
+    elif view["step"]:
+        keys = content.step_keys(group, view["step"])
+        for number, step in enumerate(content.group_steps(group), start=1):
+            step_texts = content.step_keys(group, step)
+            steps.append({"id": step, "number": number,
+                          "name": content.step_name(step, texts), "count": len(step_texts),
+                          "changed": sum(1 for k in step_texts if k in overrides)})
+        if view["step"] in NODES:
+            screen = preview.screen(texts, view["step"])
     else:
         keys = [k for k, d in TEXTS.items() if d.group == group]
     groups = [{"id": gid, "name": name,
                "count": sum(1 for d in TEXTS.values() if d.group == gid),
                "changed": sum(1 for k in overrides if k in TEXTS and TEXTS[k].group == gid)}
               for gid, name in GROUPS]
+    current = next((st for st in steps if st["id"] == view["step"]), None)
     return render_template(
-        "admin/texts.html", section=section, group=group, query=query, groups=groups,
-        group_name=GROUP_NAMES.get(group, ""),
-        rows=_text_rows(keys, texts, overrides, errors or {}, submitted or {})), status
-
-
-def _section_args(key: Optional[str] = None) -> tuple:
-    """(section, group, query) of the page to show; for a text form — the page it is on."""
-    source = request.form if request.method == "POST" else request.args
-    section = INFO_GROUP if source.get("section") == INFO_GROUP else "texts"
-    group = source.get("group", "")
-    group = group if group in GROUP_NAMES else GROUPS[0][0]
-    query = " ".join((source.get("q") or "").split())[:SEARCH_LIMIT]
-    if key is not None:
-        if section == INFO_GROUP and TEXTS[key].group != INFO_GROUP:
-            section = "texts"
-        if section != INFO_GROUP and not query:
-            group = TEXTS[key].group
-    return section, group, query
-
-
-def _back_to_texts(section: str, group: str, query: str, key: str):
-    if section == INFO_GROUP:
-        return redirect(url_for("admin.info_blocks", _anchor="t-" + key))
-    args = {"q": query} if query else {"group": group}
-    return redirect(url_for("admin.texts_page", _anchor="t-" + key, **args))
+        "admin/texts.html", view=view, section=view["section"], group=group, query=query,
+        groups=groups, group_name=GROUP_NAMES.get(group, ""), steps=steps, current_step=current,
+        prev_step=steps[current["number"] - 2] if current and current["number"] > 1 else None,
+        next_step=steps[current["number"]] if current and current["number"] < len(steps)
+        else None,
+        screen=screen, changed_total=sum(1 for k in overrides if k in TEXTS),
+        rows=_text_rows(keys, texts, overrides, errors or {}, submitted or {}),
+        when=content.moscow_time), status
 
 
 @admin_bp.get("/texts")
 def texts_page():
-    section, group, query = _section_args()
-    return _render_texts("texts", group, query)
+    view = _text_view()
+    view["section"] = "texts"
+    return _render_texts(view)
 
 
 @admin_bp.get("/info")
 def info_blocks():
-    return _render_texts(INFO_GROUP, INFO_GROUP, "")
+    view = _text_view()
+    view.update(section=INFO_GROUP, group=INFO_GROUP, step="", q="", changed=False)
+    return _render_texts(view)
+
+
+def _text_or_404(key: str) -> None:
+    if key not in TEXTS:
+        abort(404)
 
 
 @admin_bp.post("/texts/<key>")
 def text_save(key: str):
-    if key not in TEXTS:
-        abort(404)
-    section, group, query = _section_args(key)
+    _text_or_404(key)
+    view = _text_view(key)
     value, error = content.check_text(key, request.form.get("value"))
     if error:
-        return _render_texts(section, group, query, errors={key: error},
+        return _render_texts(view, errors={key: error},
                              submitted={key: request.form.get("value", "")}, status=400)
     storage = _storage()
     if value == TEXTS[key].default:
@@ -373,18 +460,66 @@ def text_save(key: str):
     else:
         storage.set_text_override(key, value)
     log.info("Text %s changed in the panel", key)
-    flash("Сохранено, бот уже использует новый текст.", "ok")
-    return _back_to_texts(section, group, query, key)
+    flash("Сохранено, бот уже использует новый текст. Прежний вариант — в истории "
+          "изменений под текстом.", "ok")
+    return redirect(_texts_url(view, key))
+
+
+@admin_bp.post("/texts/<key>/preview")
+def text_preview(key: str):
+    """How the client will see the edited text, before it reaches the bot."""
+    _text_or_404(key)
+    view = _text_view(key)
+    value, error = content.check_text(key, request.form.get("value"))
+    if error:
+        return _render_texts(view, errors={key: error},
+                             submitted={key: request.form.get("value", "")}, status=400)
+    storage = _storage()
+    current = TextStore(storage)
+    text_def = TEXTS[key]
+    return render_template(
+        "admin/text_preview.html", key=key, label=text_def.label, value=value, view=view,
+        kind="button" if content.is_button(text_def) else text_def.kind,
+        limit=content.text_limit(text_def), unchanged=value == current.get(key),
+        before=preview.text_screen(current, key),
+        after=preview.text_screen(preview.PreviewTexts(storage, {key: value}), key),
+        back=_texts_url(view, key))
 
 
 @admin_bp.post("/texts/<key>/reset")
 def text_reset(key: str):
-    if key not in TEXTS:
-        abort(404)
-    section, group, query = _section_args(key)
+    _text_or_404(key)
+    view = _text_view(key)
     _storage().delete_text_override(key)
     flash("Возвращён текст по умолчанию — бот уже использует его.", "ok")
-    return _back_to_texts(section, group, query, key)
+    return redirect(_texts_url(view, key))
+
+
+def _history_entry_or_404(entry_id: int, scope: str, keys) -> dict:
+    entry = _storage().get_history_entry(entry_id)
+    if entry is None or entry["scope"] != scope or entry["key"] not in keys:
+        abort(404)
+    return entry
+
+
+@admin_bp.post("/texts/<key>/restore/<int:entry_id>")
+def text_restore(key: str, entry_id: int):
+    _text_or_404(key)
+    entry = _history_entry_or_404(entry_id, HISTORY_TEXT, {key})
+    view = _text_view(key)
+    storage = _storage()
+    if entry["value"] is None or entry["value"] == TEXTS[key].default:
+        storage.delete_text_override(key)
+    else:
+        value, error = content.check_text(key, entry["value"])
+        if error:
+            flash("Эту версию нельзя вернуть: " + error, "error")
+            return redirect(_texts_url(view, key))
+        storage.set_text_override(key, value)
+    log.info("Text %s restored to version %s in the panel", key, entry_id)
+    flash(f"Возвращена версия, действовавшая до {content.moscow_time(entry['created_at'])} — "
+          f"бот уже использует её.", "ok")
+    return redirect(_texts_url(view, key))
 
 
 # -- contacts, links and the demo policy -----------------------------------------------
@@ -397,21 +532,48 @@ def _policy_link_in_bot(storage) -> str:
     return (base + "/privacy") if base else url_for("privacy_page", _external=True)
 
 
+def _render_contacts(values: Dict[str, str], errors: Dict[str, str], status: int = 200):
+    storage = _storage()
+    return render_template(
+        "admin/contacts.html", values=values, errors=errors,
+        policy_link=_policy_link_in_bot(storage),
+        history=storage.history(HISTORY_SETTING, content.CONTACT_FIELDS, HISTORY_SHOWN * 2),
+        field_labels=content.CONTACT_LABELS, when=content.moscow_time,
+        screen=preview.screen(TextStore(storage), "contacts")), status
+
+
+def _saved_contacts() -> Dict[str, str]:
+    storage = _storage()
+    return {f: storage.get_setting(f) or "" for f in content.CONTACT_FIELDS}
+
+
 @admin_bp.route("/contacts", methods=["GET", "POST"])
 def contacts():
     storage = _storage()
     if request.method == "POST":
         values, errors = content.check_contacts(request.form)
         if errors:
-            return render_template("admin/contacts.html", values=values, errors=errors,
-                                   policy_link=_policy_link_in_bot(storage)), 400
+            return _render_contacts(values, errors, 400)
         for field in content.CONTACT_FIELDS:
-            storage.set_setting(field, values[field])
-        flash("Сохранено. Бот уже показывает новые контакты и ссылку.", "ok")
+            storage.set_setting(field, values[field], keep_history=True)
+        flash("Сохранено. Бот уже показывает новые контакты и ссылку. Прежние значения — "
+              "в истории изменений внизу страницы.", "ok")
         return redirect(url_for("admin.contacts"))
-    values = {f: storage.get_setting(f) or "" for f in content.CONTACT_FIELDS}
-    return render_template("admin/contacts.html", values=values, errors={},
-                           policy_link=_policy_link_in_bot(storage))
+    return _render_contacts(_saved_contacts(), {})
+
+
+@admin_bp.post("/contacts/restore/<int:entry_id>")
+def contacts_restore(entry_id: int):
+    entry = _history_entry_or_404(entry_id, HISTORY_SETTING, content.CONTACT_FIELDS)
+    values, errors = content.check_contacts({**_saved_contacts(),
+                                             entry["key"]: entry["value"] or ""})
+    if errors.get(entry["key"]):
+        flash("Это значение нельзя вернуть: " + errors[entry["key"]], "error")
+    else:
+        _storage().set_setting(entry["key"], values[entry["key"]], keep_history=True)
+        flash(f"«{content.CONTACT_LABELS[entry['key']]}»: возвращено прежнее значение — бот "
+              f"уже показывает его.", "ok")
+    return redirect(url_for("admin.contacts"))
 
 
 @admin_bp.route("/policy", methods=["GET", "POST"])
@@ -427,19 +589,31 @@ def policy():
         if error:
             return render_template("admin/policy.html", text=request.form.get("text", ""),
                                    error=error, changed=True), 400
-        storage.set_setting(content.PRIVACY_PAGE_SETTING, text)
+        storage.set_setting(content.PRIVACY_PAGE_SETTING, text, keep_history=True)
         flash("Сохранено. Страница политики уже показывает новый текст.", "ok")
         return redirect(url_for("admin.policy"))
     saved = storage.get_setting(content.PRIVACY_PAGE_SETTING)
     return render_template("admin/policy.html", text=saved or content.DEFAULT_PRIVACY_PAGE,
                            error=None, changed=bool(saved),
-                           external=(storage.get_setting("privacy_url") or "").strip())
+                           external=(storage.get_setting("privacy_url") or "").strip(),
+                           history=storage.history(HISTORY_SETTING,
+                                                   [content.PRIVACY_PAGE_SETTING], HISTORY_SHOWN),
+                           when=content.moscow_time)
 
 
 @admin_bp.post("/policy/reset")
 def policy_reset():
-    _storage().set_setting(content.PRIVACY_PAGE_SETTING, "")
+    _storage().set_setting(content.PRIVACY_PAGE_SETTING, "", keep_history=True)
     flash("Возвращён демонстрационный текст.", "ok")
+    return redirect(url_for("admin.policy"))
+
+
+@admin_bp.post("/policy/restore/<int:entry_id>")
+def policy_restore(entry_id: int):
+    entry = _history_entry_or_404(entry_id, HISTORY_SETTING, {content.PRIVACY_PAGE_SETTING})
+    _storage().set_setting(content.PRIVACY_PAGE_SETTING, entry["value"] or "",
+                           keep_history=True)
+    flash("Возвращена прежняя версия текста политики.", "ok")
     return redirect(url_for("admin.policy"))
 
 

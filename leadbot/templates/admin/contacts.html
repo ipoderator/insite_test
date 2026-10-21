@@ -1,4 +1,5 @@
 {% extends "admin/base.html" %}
+{% from "admin/_macros.html" import tg_messages %}
 {% block title %}Контакты и ссылки{% endblock %}
 {% macro field(name, caption, hint, type='text', placeholder='') %}
   <label class="field{% if errors.get(name) %} has-error{% endif %}">
@@ -21,4 +22,27 @@
   <p class="muted small">Сейчас бот ведёт по ссылке: <a href="{{ policy_link }}" target="_blank" rel="noopener noreferrer">{{ policy_link }}</a></p>
   <div class="actions"><button type="submit" class="btn btn-primary">Сохранить</button></div>
 </form>
+
+<details class="card tg-card">
+  <summary>Как клиент видит экран «Связаться с нами» сейчас</summary>
+  {{ tg_messages(screen) }}
+</details>
+
+{% if history %}
+  <section class="card">
+    <h2>История изменений</h2>
+    <ol class="history-list">
+      {% for entry in history %}
+        <li>
+          <span class="muted small">до {{ when(entry.created_at) }} · {{ field_labels.get(entry.key, entry.key) }}:</span>
+          {% if entry.value %}<span>{{ entry.value }}</span>{% else %}<span class="muted">пусто</span>{% endif %}
+          <form method="post" action="{{ url_for('admin.contacts_restore', entry_id=entry.id) }}" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-quiet btn-small">Вернуть</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ol>
+  </section>
+{% endif %}
 {% endblock %}

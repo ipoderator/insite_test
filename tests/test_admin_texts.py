@@ -4,6 +4,7 @@ import re
 
 import pytest
 
+from leadbot.admin import content
 from leadbot.texts import GROUPS, TEXTS
 from tests.sim import label, plain
 from tests.test_admin_support import Panel, path_of
@@ -22,17 +23,29 @@ def shown_keys(page: str):
     return set(re.findall(r'id="t-([^"]+)"', page))
 
 
+def group_pages(group_id):
+    """Pages of a group: one, or one per step of the scenario for a large group."""
+    if content.uses_steps(group_id):
+        return [f"/admin/texts?group={group_id}&step={step}"
+                for step in content.group_steps(group_id)]
+    return [f"/admin/texts?group={group_id}"]
+
+
 def test_every_text_is_listed_in_its_group_with_label_and_default(panel):
     seen = set()
     for group_id, group_name in GROUPS:
-        page = panel.page(f"/admin/texts?group={group_id}")
-        assert html.escape(group_name) in page
-        keys = shown_keys(page)
-        assert keys == {k for k, d in TEXTS.items() if d.group == group_id}
-        for key in keys:
-            assert html.escape(TEXTS[key].label) in page
-            assert html.escape(TEXTS[key].default) in page
-        seen |= keys
+        group_keys = set()
+        for path in group_pages(group_id):
+            page = panel.page(path)
+            assert html.escape(group_name) in page
+            keys = shown_keys(page)
+            assert keys and not keys & group_keys  # every text on exactly one page
+            for key in keys:
+                assert html.escape(TEXTS[key].label) in page
+                assert html.escape(TEXTS[key].default) in page
+            group_keys |= keys
+        assert group_keys == {k for k, d in TEXTS.items() if d.group == group_id}
+        seen |= group_keys
     assert seen == set(TEXTS)
 
 
@@ -185,7 +198,8 @@ def test_redirect_after_save_ignores_foreign_group(panel):
 
 
 def test_question_titles_are_edited_as_edit_list_buttons(panel):
-    block = panel.page("/admin/texts?group=new").split('id="t-pay.title"')[1].split("</form>")[0]
+    block = panel.page("/admin/texts?group=new&step=pay").split('id="t-pay.title"')[1] \
+        .split("</form>")[0]
     assert ">кнопка<" in block and '<input type="text"' in block and "<textarea" not in block
     assert panel.post("/admin/texts/pay.title", {"value": "Оплата\nонлайн"}).status_code == 400
     assert panel.post("/admin/texts/pay.title", {"value": "о" * 61}).status_code == 400
@@ -194,3 +208,128 @@ def test_question_titles_are_edited_as_edit_list_buttons(panel):
     # a title the summary does not show stays a plain text
     block = panel.page("/admin/texts?group=examples").split('id="t-ex_sphere.title"')[1]
     assert ">кнопка<" not in block.split("</form>")[0]
+
+
+# -- steps, filters, technical keys ---------------------------------------------------------
+
+def test_large_group_is_shown_one_step_of_the_scenario_at_a_time(panel):
+    assert content.uses_steps("new") and not content.uses_steps("start")
+    steps = content.group_steps("new")
+    page = panel.page("/admin/texts?group=new")
+    assert shown_keys(page) == {k for k in TEXTS if k.startswith("ns_what.")}
+    assert f"шаг 1 из {len(steps)}" in page
+    for step in steps:  # every step is one click away, named by its question
+        assert f"step={step}" in page
+    assert html.escape(label("pay.title")) in page
+    assert "?group=new&amp;step=ns_other_text" in page  # «next step» button
+
+    page = panel.page("/admin/texts?group=new&step=features")
+    assert shown_keys(page) == {k for k in TEXTS if k.startswith("features.")}
+    # an unknown step falls back to the first one
+    assert shown_keys(panel.page("/admin/texts?group=new&step=zzz")) == \
+        {k for k in TEXTS if k.startswith("ns_what.")}
+
+
+def test_step_name_follows_the_title_the_customer_set(panel):
+    panel.post("/admin/texts/pay.title", {"value": "Онлайн-оплата"})
+    page = panel.page("/admin/texts?group=new&step=pay")
+    assert "Онлайн-оплата" in page.split('class="steps-nav"')[1].split("</nav>")[0]
+
+
+def test_step_shows_how_the_client_sees_it_in_telegram(panel):
+    panel.post("/admin/texts/pay.hint", {"value": "Только для ИП и компаний"})
+    page = panel.page("/admin/texts?group=new&step=pay")
+    tg = page.split('class="tg"')[1].split("</details>")[0]
+    assert html.escape(label("pay.question")) in tg and "Только для ИП и компаний" in tg
+    for key in ("pay.opt.yes", "pay.opt.no", "common.back"):
+        assert html.escape(label(key)) in tg
+
+
+def test_save_from_a_step_returns_to_that_step(panel):
+    resp = panel.post("/admin/texts/pay.question",
+                      {"value": "Оплата онлайн нужна?", "group": "new", "step": "pay"})
+    assert path_of(resp.location) == "/admin/texts?group=new&step=pay"
+    assert resp.location.endswith("#t-pay.question")
+    # a text saved from a stale page goes to its own step
+    resp = panel.post("/admin/texts/crm.question",
+                      {"value": "CRM нужна?", "group": "new", "step": "pay"})
+    assert path_of(resp.location) == "/admin/texts?group=new&step=crm"
+
+
+def test_changed_only_filter_lists_changed_texts_across_groups(panel):
+    assert "Изменённых текстов нет" in panel.page("/admin/texts?changed=1")
+    panel.post("/admin/texts/pay.question", {"value": "Оплата онлайн нужна?"})
+    panel.post("/admin/texts/privacy.start", {"value": "Поехали"})
+    page = panel.page("/admin/texts?changed=1")
+    assert shown_keys(page) == {"pay.question", "privacy.start"}
+    assert "Изменённые тексты: 2" in page
+    assert shown_keys(panel.page("/admin/texts?changed=1&q=поехали")) == {"privacy.start"}
+    resp = panel.post("/admin/texts/privacy.start/reset", {"changed": "1"})
+    assert path_of(resp.location) == "/admin/texts?changed=1"
+    assert shown_keys(panel.page("/admin/texts?changed=1")) == {"pay.question"}
+    assert "?changed=1" in panel.page("/admin")  # the home counter leads here
+
+
+def test_technical_keys_are_hidden_unless_asked_for(panel):
+    page = panel.page("/admin/texts?group=start")
+    assert 'class="key' not in page and ">privacy.start<" not in page
+    assert "Показать технические ключи" in page
+    page = panel.page("/admin/texts?group=start&keys=1")
+    assert '<span class="key small">privacy.start</span>' in page
+    resp = panel.post("/admin/texts/privacy.start",
+                      {"value": "Поехали", "group": "start", "keys": "1"})
+    assert "keys=1" in path_of(resp.location)
+
+
+# -- preview before publishing ---------------------------------------------------------------
+
+def test_preview_shows_the_change_without_saving_it(panel):
+    resp = panel.post("/admin/texts/pay.question/preview",
+                      {"value": "Оплата онлайн нужна?", "group": "new", "step": "pay"})
+    page = resp.get_data(as_text=True)
+    assert resp.status_code == 200
+    assert panel.storage.get_text_override("pay.question") is None
+    before, after = page.split("Сейчас в боте<")[1].split("После публикации<", 1)
+    assert html.escape(label("pay.question")) in before
+    assert "Оплата онлайн нужна?" in after and html.escape(label("pay.opt.yes")) in after
+    form = page.split('id="t-pay.question"')[0].rsplit("<form", 1)[1]
+    assert 'action="/admin/texts/pay.question"' in form
+    assert "Опубликовать" in page and 'name="step" value="pay"' in page
+
+    resp = panel.post("/admin/texts/pay.question",
+                      {"value": "Оплата онлайн нужна?", "group": "new", "step": "pay"})
+    assert resp.status_code == 302
+    assert panel.storage.get_text_override("pay.question") == "Оплата онлайн нужна?"
+
+
+def test_preview_of_an_invalid_text_shows_the_error(panel):
+    resp = panel.post("/admin/texts/contacts.phone/preview", {"value": "Телефон студии"})
+    assert resp.status_code == 400
+    assert "Оставьте в тексте" in resp.get_data(as_text=True)
+
+
+def test_preview_says_when_nothing_changed(panel):
+    page = panel.post("/admin/texts/menu.text/preview",
+                      {"value": label("menu.text"), "section": "info"}).get_data(as_text=True)
+    assert "Текст не изменился" in page
+
+
+def test_info_blocks_are_published_through_the_preview(panel):
+    page = panel.page("/admin/info")
+    block = page.split('id="t-privacy.text"')[1].split("</form>")[0]
+    assert "Предпросмотр и публикация" in block
+    assert 'formaction="/admin/texts/privacy.text/preview"' in block
+    assert ">Сохранить</button>" not in block
+    # ordinary texts keep the one-click save next to the preview
+    block = panel.page("/admin/texts?group=start").split('id="t-privacy.start"')[1] \
+        .split("</form>")[0]
+    assert ">Сохранить</button>" in block and ">Предпросмотр</button>" in block
+
+    page = panel.post("/admin/texts/privacy.text/preview",
+                      {"value": "Ваши данные в безопасности. {policy}", "section": "info"}
+                      ).get_data(as_text=True)
+    after = page.split("После публикации")[1]
+    assert "Ваши данные в безопасности." in after
+    assert f'<span class="tg-link">{label("privacy.link")}</span>' in after
+    assert html.escape(label("privacy.start")) in after
+    assert 'name="section" value="info"' in page

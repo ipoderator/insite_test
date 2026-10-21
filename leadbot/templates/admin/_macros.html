@@ -1,0 +1,32 @@
+{# Shared pieces of the panel pages: import with {% from "admin/_macros.html" import … %}. #}
+
+{# Messages of preview.screen() drawn like a Telegram chat. #}
+{% macro tg_messages(messages) %}
+<div class="tg">
+  {% for m in messages %}
+    {% if m.popup %}
+      <div class="tg-popup">{{ m.parts[0][0] }}</div>
+    {% else %}
+      {% if m.parts %}
+        <div class="tg-bubble">{% for text, style in m.parts %}{% if style == 'b' %}<strong>{{ text }}</strong>{% elif style == 'a' %}<span class="tg-link">{{ text }}</span>{% else %}{{ text }}{% endif %}{% endfor %}</div>
+      {% endif %}
+      {% if m.buttons %}
+        <div class="tg-buttons">{% for b in m.buttons %}<span class="tg-button">{{ b }}</span>{% endfor %}</div>
+      {% endif %}
+      {% if m.reply_buttons %}
+        <div class="tg-reply">{% for b in m.reply_buttons %}<span class="tg-button">{{ b }}</span>{% endfor %}<span class="muted small">кнопка внизу экрана, вместо клавиатуры</span></div>
+      {% endif %}
+    {% endif %}
+  {% endfor %}
+</div>
+{% endmacro %}
+
+{# The texts page a text form came from: the view returns there after a save. #}
+{% macro view_fields(view) %}
+  <input type="hidden" name="section" value="{{ view.section }}">
+  <input type="hidden" name="group" value="{{ view.group }}">
+  {% if view.step %}<input type="hidden" name="step" value="{{ view.step }}">{% endif %}
+  {% if view.q %}<input type="hidden" name="q" value="{{ view.q }}">{% endif %}
+  {% if view.changed %}<input type="hidden" name="changed" value="1">{% endif %}
+  {% if view.show_keys %}<input type="hidden" name="keys" value="1">{% endif %}
+{% endmacro %}

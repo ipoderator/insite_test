@@ -2,7 +2,19 @@
 {% block title %}Заявки{% endblock %}
 {% block content %}
 <h1>Заявки</h1>
-<form class="filters card" method="get" action="{{ url_for('admin.leads_list') }}">
+<form class="filters card" method="get" action="{{ url_for('admin.leads_list') }}" role="search">
+  <label class="field field-grow">
+    <span class="field-label">Поиск</span>
+    <input type="search" name="q" value="{{ query }}" maxlength="100" placeholder="Имя, телефон или №12">
+  </label>
+  <label class="field field-date">
+    <span class="field-label">С даты</span>
+    <input type="date" name="from" value="{{ day_from }}">
+  </label>
+  <label class="field field-date">
+    <span class="field-label">По дату</span>
+    <input type="date" name="to" value="{{ day_to }}">
+  </label>
   <label class="field field-inline">
     <span class="field-label">Тип</span>
     <select name="kind">
@@ -21,6 +33,15 @@
       {% endfor %}
     </select>
   </label>
+  <label class="field field-inline">
+    <span class="field-label">Доставка</span>
+    <select name="delivery">
+      <option value="">Любая</option>
+      {% for value, caption in deliveries %}
+        <option value="{{ value }}"{% if value == delivery %} selected{% endif %}>{{ caption }}</option>
+      {% endfor %}
+    </select>
+  </label>
   <button type="submit" class="btn">Показать</button>
   {% if filtered %}<a class="btn btn-quiet" href="{{ url_for('admin.leads_list') }}">Сбросить</a>{% endif %}
 </form>
@@ -35,6 +56,7 @@
     {% endif %}
   </div>
 {% else %}
+  <p class="muted small">{{ 'Найдено' if filtered else 'Всего заявок' }}: {{ total }}{% if pages > 1 %} · страница {{ page }} из {{ pages }}{% endif %}</p>
   <table class="table responsive">
     <thead>
       <tr><th>№</th><th>Дата</th><th>Тип</th><th>Имя</th><th>Телефон</th><th>Доставка</th><th>Статус</th></tr>
@@ -59,6 +81,12 @@
       {% endfor %}
     </tbody>
   </table>
-  {% if leads|length >= 200 %}<p class="muted small">Показаны последние 200 заявок.</p>{% endif %}
+  {% if pages > 1 %}
+    <nav class="pager actions" aria-label="Страницы заявок">
+      {% if page > 1 %}<a class="btn" href="{{ url_for('admin.leads_list', page=page - 1, **link_args) }}" rel="prev">← Новее</a>{% endif %}
+      <span class="muted">Страница {{ page }} из {{ pages }}</span>
+      {% if page < pages %}<a class="btn" href="{{ url_for('admin.leads_list', page=page + 1, **link_args) }}" rel="next">Старше →</a>{% endif %}
+    </nav>
+  {% endif %}
 {% endif %}
 {% endblock %}

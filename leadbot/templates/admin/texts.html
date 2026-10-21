@@ -1,10 +1,12 @@
 {% extends "admin/base.html" %}
+{% from "admin/_macros.html" import tg_messages, view_fields %}
 {% block title %}{{ 'Информационные блоки' if section == 'info' else 'Тексты' }}{% endblock %}
 {% block content %}
 {% if section == 'info' %}
   <h1>Информационные блоки</h1>
   <p class="lead-text">Крупные тексты, которые бот показывает клиенту: блок о конфиденциальности,
-    приветствие, вступления и финальное сообщение.</p>
+    приветствие, вступления и финальное сообщение. Перед публикацией панель покажет, как
+    сообщение будет выглядеть в Telegram.</p>
 {% else %}
   <h1>Тексты бота</h1>
   <p class="lead-text">Все сообщения, вопросы, подсказки и кнопки. Выберите экран или найдите текст
@@ -15,41 +17,64 @@
       <span class="field-label">Поиск по текстам</span>
       <input type="search" name="q" value="{{ query }}" placeholder="Например: бюджет, телефон, Готово">
     </label>
-    <button type="submit" class="btn">Найти</button>
-    {% if query %}<a class="btn btn-quiet" href="{{ url_for('admin.texts_page', group=group) }}">Сбросить</a>{% endif %}
+    <label class="check check-inline">
+      <input type="checkbox" name="changed" value="1"{% if view.changed %} checked{% endif %}>
+      <span>Только изменённые</span>
+    </label>
+    {% if view.show_keys %}<input type="hidden" name="keys" value="1">{% endif %}
+    <button type="submit" class="btn">Показать</button>
+    {% if query or view.changed %}<a class="btn btn-quiet" href="{{ url_for('admin.texts_page', group=group) }}">Сбросить</a>{% endif %}
   </form>
 
   <nav class="tabs" aria-label="Экраны бота">
     {% for g in groups %}
-      <a href="{{ url_for('admin.texts_page', group=g.id) }}"{% if not query and g.id == group %} class="active" aria-current="page"{% endif %}>
+      <a href="{{ url_for('admin.texts_page', group=g.id) }}"{% if not (query or view.changed) and g.id == group %} class="active" aria-current="page"{% endif %}>
         {{ g.name }} <span class="count">{{ g.count }}</span>{% if g.changed %} <span class="count count-changed" title="изменено">✎ {{ g.changed }}</span>{% endif %}
       </a>
     {% endfor %}
   </nav>
 
-  {% if query %}
-    <h2>Найдено: {{ rows|length }}</h2>
+  {% if query or view.changed %}
+    <h2>{% if view.changed and not query %}Изменённые тексты{% else %}Найдено{% endif %}: {{ rows|length }}</h2>
+  {% elif steps %}
+    <h2>{{ group_name }}: шаг {{ current_step.number }} из {{ steps|length }}</h2>
+    <nav class="steps-nav" aria-label="Шаги анкеты">
+      {% for st in steps %}
+        <a href="{{ url_for('admin.texts_page', group=group, step=st.id) }}"{% if st.id == view.step %} class="active" aria-current="step"{% endif %}>
+          <span class="step-number">{{ st.number }}</span> {{ st.name }}{% if st.changed %} <span class="count count-changed" title="изменено">✎ {{ st.changed }}</span>{% endif %}
+        </a>
+      {% endfor %}
+    </nav>
+    <h2 class="step-title">{{ current_step.number }}. {{ current_step.name }}</h2>
+    {% if screen %}
+      <details class="card tg-card" open>
+        <summary>Как клиент видит этот шаг в Telegram</summary>
+        {{ tg_messages(screen) }}
+        <p class="muted small">Примерный вид с сохранёнными текстами; имя, отметки и ссылки — для примера.</p>
+      </details>
+    {% endif %}
   {% else %}
     <h2>{{ group_name }}</h2>
   {% endif %}
 {% endif %}
 
 {% if not rows %}
-  <div class="empty card"><p>Ничего не нашлось. Попробуйте другое слово.</p></div>
+  <div class="empty card">
+    {% if view.changed and not query %}<p>Изменённых текстов нет — бот использует тексты по умолчанию.</p>
+    {% else %}<p>Ничего не нашлось. Попробуйте другое слово.</p>{% endif %}
+  </div>
 {% endif %}
 
 {% for row in rows %}
   <form class="text-item card{% if row.changed %} is-changed{% endif %}{% if row.error %} has-error{% endif %}"
         id="t-{{ row.key }}" method="post" action="{{ url_for('admin.text_save', key=row.key) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <input type="hidden" name="section" value="{{ section }}">
-    <input type="hidden" name="group" value="{{ group }}">
-    {% if query %}<input type="hidden" name="q" value="{{ query }}">{% endif %}
+    {{ view_fields(view) }}
     <div class="text-head">
       <label for="v-{{ row.key }}" class="text-label">{{ row.label }}</label>
       <span class="badges">
         {% if row.kind == 'button' %}<span class="badge">кнопка</span>{% endif %}
-        {% if query %}<span class="badge">{{ row.group }}</span>{% endif %}
+        {% if query or view.changed %}<span class="badge">{{ row.group }}</span>{% endif %}
         {% if row.changed %}<span class="badge badge-changed">изменён</span>{% endif %}
       </span>
     </div>
@@ -64,18 +89,51 @@
       {% for name, hint in row.placeholders %}
         <span class="muted small">· <code>{{ '{' ~ name ~ '}' }}</code> — {{ hint }}</span>
       {% endfor %}
-      <span class="key small">{{ row.key }}</span>
+      {% if view.show_keys %}<span class="key small">{{ row.key }}</span>{% endif %}
     </div>
     <details class="default">
       <summary>Текст по умолчанию{% if not row.changed %} — сейчас используется он{% endif %}</summary>
       <p class="pre">{{ row.default }}</p>
     </details>
+    {% if row.history %}
+      <details class="default history">
+        <summary>История изменений ({{ row.history_count }})</summary>
+        <ol class="history-list">
+          {% for entry in row.history %}
+            <li>
+              <span class="muted small">до {{ when(entry.created_at) }}:</span>
+              {% if entry.value is none %}<span class="muted">текст по умолчанию</span>{% else %}<span class="pre">{{ entry.value }}</span>{% endif %}
+              <button type="submit" class="btn btn-quiet btn-small" formaction="{{ url_for('admin.text_restore', key=row.key, entry_id=entry.id) }}" formnovalidate>{{ 'Вернуть предыдущую версию' if loop.first else 'Вернуть эту версию' }}</button>
+            </li>
+          {% endfor %}
+        </ol>
+      </details>
+    {% endif %}
     <div class="actions">
-      <button type="submit" class="btn btn-primary">Сохранить</button>
+      {% if row.important %}
+        <button type="submit" class="btn btn-primary" formaction="{{ url_for('admin.text_preview', key=row.key) }}">Предпросмотр и публикация</button>
+      {% else %}
+        <button type="submit" class="btn btn-primary">Сохранить</button>
+        <button type="submit" class="btn" formaction="{{ url_for('admin.text_preview', key=row.key) }}">Предпросмотр</button>
+      {% endif %}
       {% if row.changed %}
         <button type="submit" class="btn btn-quiet" formaction="{{ url_for('admin.text_reset', key=row.key) }}" formnovalidate>Вернуть по умолчанию</button>
       {% endif %}
     </div>
   </form>
 {% endfor %}
+
+{% if steps and (prev_step or next_step) %}
+  <nav class="actions step-pager" aria-label="Соседние шаги">
+    {% if prev_step %}<a class="btn" href="{{ url_for('admin.texts_page', group=group, step=prev_step.id) }}">← {{ prev_step.number }}. {{ prev_step.name }}</a>{% endif %}
+    {% if next_step %}<a class="btn push" href="{{ url_for('admin.texts_page', group=group, step=next_step.id) }}">{{ next_step.number }}. {{ next_step.name }} →</a>{% endif %}
+  </nav>
+{% endif %}
+
+{% if section != 'info' %}
+  <p class="muted small dev-toggle">
+    {% if view.show_keys %}<a href="{{ url_for('admin.texts_page', group=group, step=view.step or None, q=query or None, changed='1' if view.changed else None) }}">Скрыть технические ключи</a>
+    {% else %}<a href="{{ url_for('admin.texts_page', group=group, step=view.step or None, q=query or None, changed='1' if view.changed else None, keys='1') }}">Показать технические ключи текстов (для программиста)</a>{% endif %}
+  </p>
+{% endif %}
 {% endblock %}

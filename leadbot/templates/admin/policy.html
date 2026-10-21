@@ -23,4 +23,23 @@
     {% endif %}
   </div>
 </form>
+
+{% if history %}
+  <section class="card">
+    <h2>История изменений</h2>
+    <ol class="history-list">
+      {% for entry in history %}
+        <li>
+          <span class="muted small">до {{ when(entry.created_at) }}:</span>
+          {% if entry.value %}<span>{{ entry.value|truncate(160) }}</span> <span class="muted small">({{ entry.value|length }} симв.)</span>
+          {% else %}<span class="muted">демонстрационный текст</span>{% endif %}
+          <form method="post" action="{{ url_for('admin.policy_restore', entry_id=entry.id) }}" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-quiet btn-small">Вернуть эту версию</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ol>
+  </section>
+{% endif %}
 {% endblock %}

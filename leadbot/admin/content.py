@@ -6,12 +6,12 @@ in one place. Messages are Russian: they are shown to the customer as is.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..leads import MOSCOW
 from ..scenario import BRANCHES, NODES
-from ..texts import TEXTS, TextDef
+from ..texts import TEXTS, TextDef, TextStore
 from ..validators import validate_url
 
 # -- settings keys owned by the panel ------------------------------------------------
@@ -19,6 +19,8 @@ from ..validators import validate_url
 PRIVACY_PAGE_SETTING = "privacy_page_text"   # text of the demo page /privacy
 SESSION_EPOCH_SETTING = "admin_session_epoch"  # changes on "Выйти": old cookies stop working
 CONTACT_FIELDS = ("contact_telegram", "contact_phone", "contact_email", "privacy_url")
+CONTACT_LABELS = {"contact_telegram": "Telegram", "contact_phone": "Телефон",
+                  "contact_email": "Email", "privacy_url": "Ссылка на политику"}
 
 # -- texts -------------------------------------------------------------------------
 
@@ -48,6 +50,50 @@ PLACEHOLDER_HINTS = {
 
 LEAD_STATUSES = (("new", "Новая"), ("processed", "Обработана"))
 LEAD_KINDS = ("new", "redesign", "promo", "examples")
+LEAD_DELIVERY = (("no", "Не доставлена"), ("yes", "Доставлена"))
+LEADS_PAGE_SIZE = 50
+LEAD_QUERY_LIMIT = 100
+
+# -- steps of a large text group ---------------------------------------------------
+
+STEP_MIN_TEXTS = 20  # a group this large is shown one step of the scenario at a time
+# steps without a «<step>.title» text of their own
+STEP_NAMES = {
+    "privacy": "Перед началом", "menu": "Главное меню", "resume": "Незаконченная анкета",
+    "thanks": "После отправки заявки", "ex_card": "Карточка примеров",
+    "order": "Заказать услугу", "lead": "Заявка", "owner": "Привязка получателя",
+    "cmd": "Команды", "err": "Ошибки ввода",
+}
+
+
+def step_of(key: str) -> str:
+    """Step of the scenario a text belongs to: the node part of its key."""
+    return key.split(".", 1)[0]
+
+
+def group_steps(group: str) -> List[str]:
+    """Steps of a group in the catalog's order (the order of the scenario)."""
+    steps: List[str] = []
+    for key, text_def in TEXTS.items():
+        if text_def.group == group and step_of(key) not in steps:
+            steps.append(step_of(key))
+    return steps
+
+
+def uses_steps(group: str) -> bool:
+    count = sum(1 for d in TEXTS.values() if d.group == group)
+    return count >= STEP_MIN_TEXTS and len(group_steps(group)) > 1
+
+
+def step_keys(group: str, step: str) -> List[str]:
+    return [k for k, d in TEXTS.items() if d.group == group and step_of(k) == step]
+
+
+def step_name(step: str, texts: TextStore) -> str:
+    """The question's short title as the customer set it, else a fixed name."""
+    if f"{step}.title" in TEXTS:
+        return texts.get(f"{step}.title")
+    return STEP_NAMES.get(step, step)
 
 
 def is_button(text_def: TextDef) -> bool:
@@ -227,6 +273,52 @@ DEFAULT_PRIVACY_PAGE = """\
 """
 
 
+def policy_is_filled(text: Optional[str]) -> bool:
+    """The demo policy page text is the customer's own: changed and without «— впишите]»."""
+    text = (text or "").strip()
+    return bool(text) and text != DEFAULT_PRIVACY_PAGE.strip() and "впишите]" not in text
+
+
+# -- what is still demo before the hand-over -----------------------------------------
+
+def handover_gaps(settings: Dict[str, str], categories: Sequence[Dict[str, Any]]
+                  ) -> List[Dict[str, str]]:
+    """Data the customer has not given yet: {title, detail, endpoint, action}, by importance.
+
+    ``categories`` — all spheres with their ``items``.
+    """
+    gaps: List[Dict[str, str]] = []
+    if not (settings.get("owner_chat_id") or "").strip():
+        gaps.append({"title": "Получатель заявок не привязан",
+                     "detail": "Заявки сохраняются в панели, но не приходят вам в Telegram.",
+                     "endpoint": "admin.recipient", "action": "Привязать чат"})
+    if not (settings.get("privacy_url") or "").strip():
+        gaps.append({"title": "Ссылка на политику конфиденциальности ведёт на демо-страницу",
+                     "detail": "Клиенты видят её в блоке «Перед началом». Укажите ссылку на "
+                               "политику вашей компании.",
+                     "endpoint": "admin.contacts", "action": "Указать ссылку"})
+        if not policy_is_filled(settings.get(PRIVACY_PAGE_SETTING)):
+            gaps.append({"title": "Демо-текст политики не заполнен",
+                         "detail": "Пока нет своей ссылки, впишите в демо-текст реквизиты, "
+                                   "хостинг и срок хранения — места помечены «впишите».",
+                         "endpoint": "admin.policy", "action": "Заполнить текст"})
+    active = [c for c in categories if c.get("active")]
+    demo = [c for c in active if any(i.get("is_demo") for i in c.get("items") or [])]
+    if demo:
+        count = sum(1 for c in demo for i in c["items"] if i.get("is_demo"))
+        gaps.append({"title": f"Примеры работ с пометкой «демо»: {count}",
+                     "detail": "В боте они идут с пометкой «(демо)». Сферы: "
+                               + ", ".join(c["button"] for c in demo) + ".",
+                     "endpoint": "admin.examples", "action": "Заменить примеры"})
+    empty = [c for c in active if not c.get("items")]
+    if empty:
+        gaps.append({"title": f"Сферы без примеров: {len(empty)}",
+                     "detail": "Бот пишет клиенту, что примеры скоро появятся. Сферы: "
+                               + ", ".join(c["button"] for c in empty) + ".",
+                     "endpoint": "admin.examples", "action": "Добавить примеры"})
+    return gaps
+
+
 # -- formatting --------------------------------------------------------------------
 
 def moscow_time(value: Optional[str]) -> str:
@@ -240,6 +332,24 @@ def moscow_time(value: Optional[str]) -> str:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     return moment.astimezone(MOSCOW).strftime("%d.%m.%Y %H:%M")
+
+
+def parse_day(value: Optional[str]) -> Optional[date]:
+    """«2026-10-21» from a date field; anything else — no date."""
+    try:
+        return date.fromisoformat((value or "").strip())
+    except ValueError:
+        return None
+
+
+def moscow_day_start(day: date) -> str:
+    """UTC ISO-8601 of 00:00 Moscow time on ``day``, comparable with the stored times."""
+    moment = datetime.combine(day, time.min, tzinfo=MOSCOW)
+    return moment.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def moscow_day_after(day: date) -> str:
+    return moscow_day_start(day + timedelta(days=1))
 
 
 def file_size(size: Optional[int]) -> str:

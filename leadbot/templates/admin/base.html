@@ -11,14 +11,15 @@
 {% set nav = [
   ('admin.home', 'Главная', ['admin.home']),
   ('admin.leads_list', 'Заявки', ['admin.leads_list', 'admin.lead_card']),
-  ('admin.texts_page', 'Тексты', ['admin.texts_page', 'admin.text_save', 'admin.text_reset']),
+  ('admin.texts_page', 'Тексты', ['admin.texts_page', 'admin.text_save', 'admin.text_reset',
+     'admin.text_preview', 'admin.text_restore']),
   ('admin.info_blocks', 'Информационные блоки', ['admin.info_blocks']),
-  ('admin.contacts', 'Контакты и ссылки', ['admin.contacts']),
+  ('admin.contacts', 'Контакты и ссылки', ['admin.contacts', 'admin.contacts_restore']),
   ('admin.examples', 'Примеры работ', ['admin.examples', 'admin.category', 'admin.category_save',
      'admin.category_create', 'admin.category_delete', 'admin.item_create', 'admin.item_save',
      'admin.item_delete']),
   ('admin.recipient', 'Получатель заявок', ['admin.recipient']),
-  ('admin.policy', 'Политика (демо)', ['admin.policy']),
+  ('admin.policy', 'Политика (демо)', ['admin.policy', 'admin.policy_restore']),
   ('admin.help_page', 'Как пользоваться', ['admin.help_page']),
 ] %}
 {% block header %}

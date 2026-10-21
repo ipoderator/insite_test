@@ -7,8 +7,9 @@ import pytest
 import leadbot
 from tests.test_admin_support import Panel
 
-PAGES = ["/admin", "/admin/leads", "/admin/texts", "/admin/texts?q=сайт", "/admin/info",
-         "/admin/contacts", "/admin/policy", "/admin/examples", "/admin/recipient",
+PAGES = ["/admin", "/admin/leads", "/admin/leads?q=анна&from=2026-10-01", "/admin/texts",
+         "/admin/texts?q=сайт", "/admin/texts?group=new&step=pay", "/admin/texts?changed=1",
+         "/admin/info", "/admin/contacts", "/admin/policy", "/admin/examples", "/admin/recipient",
          "/admin/help"]
 CSS = Path(leadbot.__file__).parent / "static" / "admin.css"
 _EXTERNAL = re.compile(r'<(?:link|script|img|iframe)\b[^>]*(?:href|src)="(?:https?:)?//', re.I)

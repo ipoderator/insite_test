@@ -107,6 +107,14 @@ code {
 .tile:hover { border-color: var(--accent); }
 .tile p { color: var(--muted); margin: 0; }
 
+.gaps { border-left: 4px solid var(--changed); }
+.gap-list { list-style: none; margin: 0; padding: 0; }
+.gap-list li {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 8px 16px; padding: 10px 0; border-top: 1px solid var(--line);
+}
+.gap-text { display: flex; flex-direction: column; gap: 2px; flex: 1 1 320px; min-width: 0; }
+
 /* -- notices and badges ------------------------------------------------------------- */
 
 .notice {
@@ -134,9 +142,11 @@ code {
 .field-error { color: var(--error); font-size: 0.9rem; font-weight: 600; margin: 0; }
 .field-inline { flex: 0 1 220px; }
 .field-grow { flex: 1 1 260px; }
+.field-date { flex: 0 1 170px; }
+.check-inline { align-self: center; padding-bottom: 8px; }
 
 input[type="text"], input[type="password"], input[type="email"], input[type="tel"],
-input[type="search"], input[type="url"], select, textarea {
+input[type="search"], input[type="url"], input[type="date"], select, textarea {
   width: 100%; max-width: 100%;
   font: inherit; color: inherit;
   padding: 9px 11px; border: 1px solid #c4c1b8; border-radius: 8px; background: #fff;
@@ -166,6 +176,7 @@ input:focus, select:focus, textarea:focus, .btn:focus-visible, a:focus-visible {
 .btn-danger { color: var(--error); border-color: #e3b1aa; }
 .btn-danger:hover { border-color: var(--error); }
 .btn-icon { min-width: 40px; padding: 6px 10px; }
+.btn-small { min-height: 32px; padding: 4px 10px; font-size: 0.88rem; }
 
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
 .actions form { margin: 0; }
@@ -186,6 +197,49 @@ form.inline { display: inline-flex; gap: 6px; margin: 0; }
 .default { margin-top: 8px; }
 .default summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
 .default p { margin: 6px 0 0; padding: 8px 10px; background: #f7f6f2; border-radius: 6px; }
+.history-list { margin: 6px 0 0; padding-left: 1.3em; }
+.history-list li { margin-bottom: 6px; }
+.history-list .pre { display: block; padding: 6px 10px; background: #f7f6f2; border-radius: 6px; }
+.dev-toggle { margin-top: 24px; }
+
+.steps-nav { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 var(--gap); }
+.steps-nav a {
+  text-decoration: none; color: var(--ink); font-size: 0.88rem;
+  padding: 4px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface);
+}
+.steps-nav a:hover { border-color: var(--accent); }
+.steps-nav a.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.steps-nav a.active .count-changed { color: var(--accent-ink); }
+.step-number { font-weight: 700; opacity: 0.7; }
+.step-title { margin-top: 4px; }
+.step-pager { justify-content: space-between; }
+
+/* -- Telegram preview -------------------------------------------------------------- */
+
+.tg-card summary { cursor: pointer; font-weight: 600; }
+.tg-card[open] summary { margin-bottom: 10px; }
+.card-accent { border-color: var(--accent); }
+.tg {
+  display: flex; flex-direction: column; gap: 6px; max-width: 420px;
+  padding: 12px; border-radius: var(--radius); background: #dfe7ee;
+}
+.tg-bubble {
+  align-self: flex-start; max-width: 100%; white-space: pre-line;
+  padding: 8px 12px; border-radius: 12px 12px 12px 4px; background: #fff;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08);
+}
+.tg-link { color: #2a7ab0; text-decoration: underline; }
+.tg-buttons { display: flex; flex-direction: column; gap: 4px; }
+.tg-button {
+  display: block; text-align: center; padding: 7px 10px; border-radius: 8px;
+  background: rgba(70, 100, 125, 0.55); color: #fff; font-size: 0.9rem; font-weight: 600;
+}
+.tg-reply { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px dashed #9fb0bf; }
+.tg-popup {
+  align-self: center; max-width: 90%; text-align: center;
+  padding: 10px 14px; border-radius: 10px; background: rgba(30, 35, 40, 0.85); color: #fff;
+}
+.compare .tg { max-width: none; }
 
 /* -- lists: categories, examples ------------------------------------------------------ */
 
@@ -217,6 +271,8 @@ form.inline { display: inline-flex; gap: 6px; margin: 0; }
 .answers dt { font-weight: 600; color: var(--ink); }
 .files { list-style: none; padding: 0; margin: 0 0 8px; }
 .files li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 6px 0; }
+
+.pager { justify-content: center; gap: 12px; }
 
 .steps { padding-left: 1.3em; }
 .steps li { margin-bottom: 6px; }

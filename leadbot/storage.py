@@ -11,11 +11,14 @@ import secrets
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Iterator, List, Optional, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 PROCESSED_UPDATES_TTL = timedelta(days=7)
 LOGIN_FAILURES_TTL = timedelta(days=1)
 LEAD_STATUS_NEW = "new"
+HISTORY_KEEP = 20  # versions kept per text or setting
+HISTORY_TEXT = "text"
+HISTORY_SETTING = "setting"
 
 _BIND_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I
 _BIND_CODE_LENGTH = 8
@@ -83,6 +86,14 @@ CREATE TABLE IF NOT EXISTS login_failures (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_login_failures_ip ON login_failures(ip, created_at);
+CREATE TABLE IF NOT EXISTS content_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_content_history_key ON content_history(scope, key, id);
 """
 
 # Seed data from the PDF, pages 24-28. Emojis in the source were lost; chosen by meaning.
@@ -124,6 +135,20 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _casefold(value: Optional[str]) -> str:
+    return (value or "").casefold()
+
+
+def _digits(value: Optional[str]) -> str:
+    return "".join(ch for ch in (value or "") if ch in "0123456789")
+
+
+def _like(value: str) -> str:
+    """``%value%`` for LIKE with the user's own % and _ taken literally (ESCAPE '\\')."""
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return "%" + escaped + "%"
+
+
 def new_bind_code() -> str:
     return "".join(secrets.choice(_BIND_CODE_ALPHABET) for _ in range(_BIND_CODE_LENGTH))
 
@@ -143,6 +168,9 @@ class Storage:
         conn = sqlite3.connect(self.path, timeout=15)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        # SQLite's own LOWER() knows only ASCII: the panel searches Russian names
+        conn.create_function("py_casefold", 1, _casefold, deterministic=True)
+        conn.create_function("py_digits", 1, _digits, deterministic=True)
         try:
             with conn:  # commit on success, rollback on error
                 yield conn
@@ -196,8 +224,14 @@ class Storage:
             row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else default
 
-    def set_setting(self, key: str, value: str) -> None:
+    def set_setting(self, key: str, value: str, keep_history: bool = False) -> None:
+        """Save a setting; ``keep_history`` — remember the previous value for a rollback."""
         with self._tx() as conn:
+            if keep_history:
+                row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+                old = row["value"] if row else None
+                if old != str(value):
+                    self._remember(conn, HISTORY_SETTING, key, old)
             conn.execute(
                 "INSERT INTO settings(key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, str(value)))
@@ -219,7 +253,13 @@ class Storage:
         return row["value"] if row else None
 
     def set_text_override(self, key: str, value: str) -> None:
+        """Save the panel's text; the value it replaces goes to the history."""
         with self._tx() as conn:
+            row = conn.execute("SELECT value FROM texts WHERE key = ?", (key,)).fetchone()
+            old = row["value"] if row else None
+            if old == value:
+                return
+            self._remember(conn, HISTORY_TEXT, key, old)
             conn.execute(
                 "INSERT INTO texts(key, value, updated_at) VALUES (?, ?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
@@ -227,11 +267,51 @@ class Storage:
 
     def delete_text_override(self, key: str) -> None:
         with self._tx() as conn:
+            row = conn.execute("SELECT value FROM texts WHERE key = ?", (key,)).fetchone()
+            if row is None:
+                return
+            self._remember(conn, HISTORY_TEXT, key, row["value"])
             conn.execute("DELETE FROM texts WHERE key = ?", (key,))
 
     def all_text_overrides(self) -> Dict[str, str]:
         with self._tx() as conn:
             return {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM texts")}
+
+    # -- history of texts and settings ---------------------------------------
+
+    def _remember(self, conn: sqlite3.Connection, scope: str, key: str,
+                  value: Optional[str]) -> None:
+        """Keep ``value`` — what was there before a change; ``None`` = the default / unset."""
+        conn.execute("INSERT INTO content_history(scope, key, value, created_at) "
+                     "VALUES (?, ?, ?, ?)", (scope, key, value, self._now()))
+        conn.execute(
+            "DELETE FROM content_history WHERE scope = ? AND key = ? AND id NOT IN ("
+            "SELECT id FROM content_history WHERE scope = ? AND key = ? "
+            "ORDER BY id DESC LIMIT ?)", (scope, key, scope, key, HISTORY_KEEP))
+
+    def history(self, scope: str, keys: Sequence[str], limit: int = HISTORY_KEEP) -> List[dict]:
+        """Previous values of ``keys``, newest first."""
+        if not keys:
+            return []
+        marks = ", ".join("?" for _ in keys)
+        with self._tx() as conn:
+            rows = conn.execute(
+                f"SELECT id, scope, key, value, created_at FROM content_history "
+                f"WHERE scope = ? AND key IN ({marks}) ORDER BY id DESC LIMIT ?",
+                (scope, *keys, int(limit)))
+            return [dict(r) for r in rows]
+
+    def history_counts(self, scope: str) -> Dict[str, int]:
+        with self._tx() as conn:
+            rows = conn.execute("SELECT key, COUNT(*) AS n FROM content_history "
+                                "WHERE scope = ? GROUP BY key", (scope,))
+            return {r["key"]: r["n"] for r in rows}
+
+    def get_history_entry(self, entry_id: int) -> Optional[dict]:
+        with self._tx() as conn:
+            row = conn.execute("SELECT id, scope, key, value, created_at FROM content_history "
+                               "WHERE id = ?", (entry_id,)).fetchone()
+        return dict(row) if row else None
 
     # -- sessions ------------------------------------------------------------
 
@@ -338,6 +418,66 @@ class Storage:
         args.append(int(limit))
         with self._tx() as conn:
             return [self._lead_from_row(r) for r in conn.execute(sql, args)]
+
+    def find_leads(self, kind: Optional[str] = None, status: Optional[str] = None,
+                   delivered: Optional[bool] = None, query: str = "",
+                   created_from: Optional[str] = None, created_to: Optional[str] = None,
+                   limit: int = 50, offset: int = 0) -> Tuple[List[dict], int]:
+        """A page of leads, newest first, and how many match in all.
+
+        ``query``: «№12» / «#12» — the lead number; only digits (spaces, «+», «-», brackets
+        allowed) — the number or a part of the phone; anything else — a part of the name or
+        the Telegram username, case-insensitive. ``created_from`` (inclusive) and
+        ``created_to`` (exclusive) are UTC ISO-8601 bounds.
+        """
+        where: List[str] = ["1 = 1"]
+        args: List[Any] = []
+        if kind:
+            where.append("kind = ?")
+            args.append(kind)
+        if status:
+            where.append("status = ?")
+            args.append(status)
+        if delivered is not None:
+            where.append("delivered = ?")
+            args.append(1 if delivered else 0)
+        if created_from:
+            where.append("created_at >= ?")
+            args.append(created_from)
+        if created_to:
+            where.append("created_at < ?")
+            args.append(created_to)
+        text = " ".join((query or "").split())
+        if text:
+            digits = _digits(text)
+            if text[0] in "№#":
+                number = text[1:].strip()
+                where.append("id = ?")
+                args.append(int(number) if number == _digits(number) and 0 < len(number) < 10
+                            else -1)
+            elif digits and all(ch in "0123456789 +-()" for ch in text):
+                # a Russian number is typed both as 8 999… and +7 999…
+                alt = "7" + digits[1:] if digits.startswith("8") and len(digits) > 1 else digits
+                where.append("(id = ? OR py_digits(phone) LIKE ? ESCAPE '\\' "
+                             "OR py_digits(phone) LIKE ? ESCAPE '\\')")
+                args += [int(digits) if len(digits) < 10 else -1, _like(digits), _like(alt)]
+            else:
+                needle = _like(text.lstrip("@").casefold())
+                where.append("(py_casefold(name) LIKE ? ESCAPE '\\' "
+                             "OR py_casefold(username) LIKE ? ESCAPE '\\')")
+                args += [needle, needle]
+        condition = " AND ".join(where)
+        with self._tx() as conn:
+            total = conn.execute(f"SELECT COUNT(*) AS n FROM leads WHERE {condition}",
+                                 args).fetchone()["n"]
+            rows = conn.execute(f"SELECT * FROM leads WHERE {condition} "
+                                f"ORDER BY id DESC LIMIT ? OFFSET ?",
+                                [*args, int(limit), int(offset)])
+            return [self._lead_from_row(r) for r in rows], total
+
+    def count_leads(self, status: Optional[str] = None,
+                    delivered: Optional[bool] = None) -> int:
+        return self.find_leads(status=status, delivered=delivered, limit=0)[1]
 
     def set_lead_delivery(self, lead_id: int, delivered: bool, error: Optional[str]) -> None:
         now = self._now()
