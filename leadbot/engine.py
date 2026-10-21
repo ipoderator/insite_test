@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from . import scenario as sc
 from . import validators
+from .checklist import checklist_items, format_checklist
 from .leads import (MAX_MESSAGE_LENGTH, answer_key, build_items, deliver_lead, format_summary,
                     lead_files, node_answer_text, session_path)
 from .scenario import NODES, Node, Option
@@ -932,12 +933,22 @@ class Engine:
             c.save = False
             return
         log.info("Lead %s saved", lead_id)
+        submitted = dict(s)  # the answers are cleared below; the checklist is built from them
         s.update(closed)
         s["context"]["last_lead_id"] = lead_id
         s["message_id"] = old_message
         self._drop_keyboard(c)
         self._deliver(lead_id)
+        self._send_checklist(c, submitted)
         self._render(c, "thanks")
+
+    def _send_checklist(self, c: _Turn, submitted: Mapping[str, Any]) -> None:
+        """Before «Спасибо», so the final message and its buttons stay the last screen."""
+        try:
+            for part in format_checklist(checklist_items(submitted), self.texts):
+                self._send(c, part)
+        except Exception:  # the lead is saved; the final message must still be sent
+            log.exception("Checklist for chat %s not sent", c.chat_id)
 
     def _resume_action(self, c: _Turn, arg: str) -> None:
         s = c.s
